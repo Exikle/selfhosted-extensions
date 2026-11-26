@@ -29,6 +29,7 @@ import {
 import { DISCOVER_SECTIONS } from "../Komga/implementations/discover-section/sections.js";
 import { getMangaDetails } from "../Komga/implementations/manga/main.js";
 import { pickShareUrl, toSourceManga } from "../Komga/implementations/manga/parsers.js";
+import { errorMessage } from "../Komga/implementations/progress/forms.js";
 import {
   chapterForProgress,
   getMangaProgress,
@@ -1264,6 +1265,31 @@ export async function runTests(logger: TestLogger) {
     await withResponse(500, "", () => form.handleMarkRead());
     const footers = JSON.stringify(form.getSections());
     expect(footers).to.contain("Could not mark read: Komga returned 500");
+  });
+
+  suite.test("progress form Mark Unread shows a thrown string, not undefined", async () => {
+    const form = (await routeRequests(progressServer(2), () =>
+      getMangaProgressManagementForm(sourceManga),
+    ).then((r) => r.result)) as unknown as {
+      handleMarkUnread(): Promise<void>;
+      getSections(): unknown[];
+    };
+    // komgaFetch wraps transport failures in an Error, so a raw string is checked on the helper.
+    expect(errorMessage("boom")).to.equal("boom");
+    expect(errorMessage(new Error("bad"))).to.equal("bad");
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    app.scheduleRequest = async () => {
+      throw "boom";
+    };
+    try {
+      await form.handleMarkUnread();
+    } finally {
+      app.scheduleRequest = original;
+    }
+    const text = JSON.stringify(form.getSections());
+    expect(text).to.contain("Could not mark unread: ");
+    expect(text).to.not.contain("undefined");
   });
 
   suite.test("processChapterReadActionQueue patches each book as completed", async () => {

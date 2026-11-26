@@ -18,6 +18,9 @@ import { chapterLabel } from "../shared/titles";
 const UNREAD_ID = "unread";
 const UNREAD_LABEL = "No chapters read";
 
+export const errorMessage = (err: unknown): string =>
+  err instanceof Error ? err.message : String(err);
+
 export class KomgaProgressForm extends Form {
   override readonly requiresExplicitSubmission = true;
 
@@ -93,7 +96,7 @@ export class KomgaProgressForm extends Form {
       await this.markUnread();
       this.actionError = undefined;
     } catch (err) {
-      this.actionError = `Could not mark unread: ${(err as Error).message}`;
+      this.actionError = `Could not mark unread: ${errorMessage(err)}`;
     }
     this.reloadForm();
   }
@@ -107,7 +110,7 @@ export class KomgaProgressForm extends Form {
       this.selectedId = this.current?.chapterId ?? UNREAD_ID;
       this.actionError = undefined;
     } catch (err) {
-      this.actionError = `Could not mark read: ${(err as Error).message}`;
+      this.actionError = `Could not mark read: ${errorMessage(err)}`;
     }
     this.reloadForm();
   }

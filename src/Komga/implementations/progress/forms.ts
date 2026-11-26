@@ -14,12 +14,10 @@ import {
 
 import { komgaFetch } from "../../services/network";
 import { chapterLabel } from "../shared/titles";
+import { errorMessage } from "../shared/utils";
 
 const UNREAD_ID = "unread";
 const UNREAD_LABEL = "No chapters read";
-
-export const errorMessage = (err: unknown): string =>
-  err instanceof Error ? err.message : String(err);
 
 export class KomgaProgressForm extends Form {
   override readonly requiresExplicitSubmission = true;

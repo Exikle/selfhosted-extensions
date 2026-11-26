@@ -45,7 +45,7 @@ export class KomgaSearchForm extends AdvancedSearchForm {
 
   private groupSection(group: TagSection): FormSectionElement<unknown> {
     const rowId = `tags-${group.id}`;
-    return Section({ id: rowId, header: group.title }, [
+    return Section({ id: `${rowId}_section`, header: group.title }, [
       TriStateSelectRow(rowId, {
         title: group.title,
         layout: "list",

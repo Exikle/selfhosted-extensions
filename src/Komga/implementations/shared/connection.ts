@@ -4,7 +4,7 @@
 import { komgaFetch, KomgaHttpError } from "../../services/network";
 import type { UserDto } from "./models";
 import { getBaseUrl } from "./state";
-import { normaliseBaseUrl } from "./utils";
+import { errorMessage, normaliseBaseUrl } from "./utils";
 
 export type ConnectionResult = { ok: boolean; message: string };
 
@@ -39,6 +39,6 @@ export async function checkConnection(
     if (err instanceof KomgaHttpError) {
       return classifyConnection({ status: err.status, reached: true, baseUrl: base });
     }
-    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    return { ok: false, message: errorMessage(err) };
   }
 }

@@ -15,7 +15,7 @@ import {
   scopeConditions,
   scopeQuery,
 } from "../shared/filters";
-import type { BookDto, Page, SeriesDto } from "../shared/models";
+import { PAGE_SIZE, type BookDto, type Page, type SeriesDto } from "../shared/models";
 import {
   getAdultGenres,
   getHideAdultContent,
@@ -24,11 +24,9 @@ import {
   getSelectedLibraries,
   type SectionStyle,
 } from "../shared/state";
-import { capitalise, encodeTagId } from "../shared/utils";
+import { capitalise, encodeTagId, errorMessage } from "../shared/utils";
 import { onDeckItem, seriesItem, sortNearlyFinished } from "./items";
 import { DISCOVER_SECTIONS } from "./sections";
-
-const PAGE_SIZE = 40;
 
 const STYLE_TYPES: Record<Exclude<SectionStyle, "hidden">, DiscoverSectionType> = {
   simple: DiscoverSectionType.simpleCarousel,
@@ -65,6 +63,7 @@ const withNext = (
 const inProgressBody = (): object => ({
   condition: {
     allOf: [
+      { deleted: { operator: "isFalse" } },
       { readStatus: { operator: "is", value: "IN_PROGRESS" } },
       ...hiddenGenreConditions(),
       ...scopeConditions(),
@@ -193,8 +192,7 @@ export async function getDiscoverSectionItems(
     }
   } catch (err) {
     // A failed load shows an empty section, not an error.
-    const detail = err instanceof Error ? err.message : String(err);
-    console.log(`Komga section ${section.id} failed: ${detail}`);
+    console.log(`[Komga] section ${section.id} failed: ${errorMessage(err)}`);
     return { items: [] };
   }
 }

@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Exikle */
 
-const VOLUME_TOKEN = /^vol(?:ume)?\.?\s*(\d+(?:\.\d+)*|TBD|TBA|N\/A|NA|\?{1,3})(?![A-Za-z])\s*/i;
+// A placeholder needs a separator after "Vol", so "Volna" is not "Vol" plus "NA".
+const VOLUME_TOKEN =
+  /^vol(?:ume)?(?:\.?\s*(\d+(?:\.\d+)*)|(?:\.\s*|\s+)(?:TBD|TBA|N\/A|NA|\?{1,3}))(?![A-Za-z])\s*/i;
 const CHAPTER_TOKEN = /^ch(?:apter)?\.?\s*-?\d+(?:\.\d+)*\s*/i;
 const SEPARATOR_TOKEN = /^[-–—:|]\s*/;
 
@@ -18,7 +20,7 @@ export function parseChapterTitle(
 
     const volumeMatch = VOLUME_TOKEN.exec(rest);
     if (volumeMatch) {
-      const parsed = parseFloat(volumeMatch[1]!);
+      const parsed = parseFloat(volumeMatch[1] ?? "");
       if (volume === undefined && !Number.isNaN(parsed)) volume = parsed;
       rest = rest.slice(volumeMatch[0].length);
       matched = true;

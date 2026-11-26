@@ -3,6 +3,8 @@
 
 // Only the fields the extension reads. Names come from Komga's API.
 
+export const PAGE_SIZE = 40;
+
 export type AuthorDto = { name: string; role: string };
 export type AlternateTitleDto = { label: string; title: string };
 export type WebLinkDto = { label: string; url: string };

@@ -13,11 +13,16 @@ import type {
 import { komgaFetch, seriesThumbnail } from "../../services/network";
 import { parseContentRating } from "../shared/content-rating";
 import { hiddenGenreConditions, scopeConditions } from "../shared/filters";
-import type { CollectionDto, LibraryDto, Page, SeriesDto } from "../shared/models";
-import { decodeTagId, encodeTagId } from "../shared/utils";
+import {
+  PAGE_SIZE,
+  type CollectionDto,
+  type LibraryDto,
+  type Page,
+  type SeriesDto,
+} from "../shared/models";
+import { capitalise, decodeTagId, encodeTagId, errorMessage } from "../shared/utils";
 import { KomgaSearchForm, type KomgaSearchMetadata } from "./forms";
 
-const PAGE_SIZE = 40;
 const MAX_COLLECTION_PAGES = 50;
 
 // Each pairing was checked on a live server, asc and desc.
@@ -38,6 +43,9 @@ const CONDITION_FIELDS: Record<string, string> = {
   collections: "collectionId",
 };
 
+// Included values of these groups are ORed; genres and tags stay ANDed.
+const ANY_OF_GROUPS = new Set(["libraries", "collections"]);
+
 export function buildSearchBody(
   title: string | undefined,
   filters: KomgaSearchMetadata["filters"],
@@ -47,13 +55,17 @@ export function buildSearchBody(
   for (const [group, states] of Object.entries(filters ?? {})) {
     const field = CONDITION_FIELDS[group];
     if (!field) continue;
+    // A series sits in one library and one set of collections, so included values are alternatives.
+    const alternatives: object[] | undefined = ANY_OF_GROUPS.has(group) ? [] : undefined;
     for (const [id, state] of Object.entries(states ?? {})) {
       const decoded = decodeTagId(id);
       if (!decoded) continue;
-      conditions.push({
-        [field]: { operator: state === "excluded" ? "isNot" : "is", value: decoded.value },
-      });
+      const excluded = state === "excluded";
+      const condition = { [field]: { operator: excluded ? "isNot" : "is", value: decoded.value } };
+      if (alternatives && !excluded) alternatives.push(condition);
+      else conditions.push(condition);
     }
+    if (alternatives && alternatives.length > 0) conditions.push({ anyOf: alternatives });
   }
   return {
     fullTextSearch: title ?? "",
@@ -88,7 +100,7 @@ export async function getSearchResults(
     return items.length === PAGE_SIZE ? { items, metadata: { page: page + 1 } } : { items };
   } catch (err) {
     // Paperback also calls this during global searches, so it must not throw.
-    console.log(`Komga search failed: ${err instanceof Error ? err.message : String(err)}`);
+    console.log(`[Komga] search failed: ${errorMessage(err)}`);
     return { items: [] };
   }
 }
@@ -98,7 +110,7 @@ export async function getSortingOptions(): Promise<SortingOption[]> {
 }
 
 const stringTags = (kind: "genre" | "tag", values: string[]) =>
-  values.map((value) => ({ id: encodeTagId(kind, value), title: value }));
+  values.map((value) => ({ id: encodeTagId(kind, value), title: capitalise(value) }));
 
 async function loadCollections(): Promise<CollectionDto[]> {
   const all: CollectionDto[] = [];

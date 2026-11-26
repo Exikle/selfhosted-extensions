@@ -4,10 +4,9 @@
 import type { Chapter, ChapterDetails, SourceManga, UpdateManager } from "@paperback/types";
 
 import { komgaFetch, pageUrl } from "../../services/network";
-import type { BookDto, Page, PageDto, SeriesDto } from "../shared/models";
+import { PAGE_SIZE, type BookDto, type Page, type PageDto, type SeriesDto } from "../shared/models";
 import { decideUpdatePriorities, toChapter } from "./parsers";
 
-const PAGE_SIZE = 40;
 const MAX_UPDATE_PAGES = 50;
 const UPDATE_CUTOFF_MARGIN_MS = 60 * 60 * 1000;
 

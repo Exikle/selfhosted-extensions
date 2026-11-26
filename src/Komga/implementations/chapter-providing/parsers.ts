@@ -18,12 +18,13 @@ export function toChapter(
   seriesLanguage: string | undefined,
   sourceManga: SourceManga,
 ): Chapter {
-  const { title, volume } = parseChapterTitle(book.metadata.title, book.number);
+  const chapNum = parseChapterNumber(book);
+  const { title, volume } = parseChapterTitle(book.metadata.title, chapNum);
   return {
     chapterId: book.id,
     sourceManga,
     langCode: seriesLanguage ? seriesLanguage.toUpperCase() : "UNKNOWN",
-    chapNum: parseChapterNumber(book),
+    chapNum,
     title: title ?? "",
     volume: volume ?? 0,
     publishDate: new Date(book.metadata.releaseDate ?? book.fileLastModified),

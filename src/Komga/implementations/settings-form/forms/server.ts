@@ -77,6 +77,7 @@ export class KomgaServerForm extends Form {
     if (!result.ok) throw new Error(result.message);
     setBaseUrl(this.baseUrl);
     setCredentials(this.username, this.password);
+    Application.invalidateDiscoverSections();
   }
 
   // Both are passed: the interceptor would otherwise authorise with the saved credentials.

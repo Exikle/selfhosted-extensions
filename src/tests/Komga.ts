@@ -29,7 +29,6 @@ import {
 import { DISCOVER_SECTIONS } from "../Komga/implementations/discover-section/sections.js";
 import { getMangaDetails } from "../Komga/implementations/manga/main.js";
 import { pickShareUrl, toSourceManga } from "../Komga/implementations/manga/parsers.js";
-import { errorMessage } from "../Komga/implementations/progress/forms.js";
 import {
   chapterForProgress,
   getMangaProgress,
@@ -75,6 +74,7 @@ import {
   basicAuthHeader,
   decodeTagId,
   encodeTagId,
+  errorMessage,
   normaliseBaseUrl,
 } from "../Komga/implementations/shared/utils.js";
 import { Komga } from "../Komga/main.js";
@@ -131,6 +131,8 @@ export async function runTests(logger: TestLogger) {
     ["Vol.1 THE END", 1, "THE END", 1],
     ["Vol. THE Beginning", 1, "Vol. THE Beginning", undefined],
     ["VOLCANO", 1, "VOLCANO", undefined],
+    ["Volna", 1, "Volna", undefined],
+    ["Vol.NA Ch.1 Name", 1, "Name", undefined],
   ];
   for (const [raw, num, title, volume] of titleRows) {
     suite.test(`parseChapterTitle: ${raw}`, async () => {
@@ -485,6 +487,24 @@ export async function runTests(logger: TestLogger) {
     },
   );
 
+  suite.test("toChapter drops a title equal to the chapter number, not the position", async () => {
+    const same = toChapter(
+      book({
+        number: 3,
+        metadata: { title: "Chapter 16 - 16", number: "16", numberSort: 16 },
+      }),
+      "en",
+      sourceManga,
+    );
+    expect(same.title).to.equal("");
+    const different = toChapter(
+      book({ number: 16, metadata: { title: "Ch.3 - 16", number: "3", numberSort: 3 } }),
+      "en",
+      sourceManga,
+    );
+    expect(different.title).to.equal("16");
+  });
+
   suite.test("toChapter: releaseDate wins over fileLastModified", async () => {
     const chapter = toChapter(
       book({ metadata: { title: "", number: "16", numberSort: 16, releaseDate: "2025-05-05" } }),
@@ -676,6 +696,62 @@ export async function runTests(logger: TestLogger) {
     });
   });
 
+  suite.test("buildSearchBody ORs included libraries and collections", async () => {
+    const body = buildSearchBody(
+      "",
+      {
+        libraries: {
+          [encodeTagId("library", "L1")]: "included",
+          [encodeTagId("library", "L2")]: "included",
+          [encodeTagId("library", "L3")]: "excluded",
+        },
+        collections: {
+          [encodeTagId("collection", "C1")]: "included",
+          [encodeTagId("collection", "C2")]: "included",
+        },
+        genres: {
+          [encodeTagId("genre", "A")]: "included",
+          [encodeTagId("genre", "B")]: "included",
+        },
+      },
+      [],
+    );
+    expect(body).to.deep.equal({
+      fullTextSearch: "",
+      condition: {
+        allOf: [
+          { libraryId: { operator: "isNot", value: "L3" } },
+          {
+            anyOf: [
+              { libraryId: { operator: "is", value: "L1" } },
+              { libraryId: { operator: "is", value: "L2" } },
+            ],
+          },
+          {
+            anyOf: [
+              { collectionId: { operator: "is", value: "C1" } },
+              { collectionId: { operator: "is", value: "C2" } },
+            ],
+          },
+          { genre: { operator: "is", value: "A" } },
+          { genre: { operator: "is", value: "B" } },
+        ],
+      },
+    });
+  });
+
+  suite.test("buildSearchBody keeps a single included library as one anyOf", async () => {
+    const body = buildSearchBody(
+      "",
+      { libraries: { [encodeTagId("library", "L1")]: "included" } },
+      [],
+    );
+    expect(body).to.deep.equal({
+      fullTextSearch: "",
+      condition: { allOf: [{ anyOf: [{ libraryId: { operator: "is", value: "L1" } }] }] },
+    });
+  });
+
   suite.test("buildSearchBody leaves out condition when there is nothing to filter", async () => {
     const body = buildSearchBody("", undefined, []);
     expect(body).to.not.have.property("condition");
@@ -864,7 +940,7 @@ export async function runTests(logger: TestLogger) {
     try {
       const form = await getAdvancedSearchForm({ title: "" });
       expect(pages.length).to.equal(2);
-      const row = form.getSections().find((s) => s.id === "tags-collections")!.items[0] as {
+      const row = form.getSections().find((s) => s.id === "tags-collections_section")!.items[0] as {
         form?: { props?: { items?: { id: string }[] } };
       };
       const ids = JSON.stringify(row);
@@ -893,6 +969,31 @@ export async function runTests(logger: TestLogger) {
     expect(a.getSearchQueryMetadata()).to.deep.equal({ filters: {} });
     const b = new KomgaSearchForm({ title: "", metadata: { filters: "x" as never } }, []);
     expect(b.getSearchQueryMetadata()).to.deep.equal({ filters: {} });
+  });
+
+  suite.test("search form capitalises genre and tag titles and keeps ids unique", async () => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    app.scheduleRequest = async (request: { url: string }) => {
+      const body = request.url.includes("/api/v1/genres")
+        ? '["action"]'
+        : request.url.includes("/api/v1/tags/series")
+          ? '["slice of life"]'
+          : "[]";
+      return [{ status: 200, headers: {} }, new TextEncoder().encode(body).buffer];
+    };
+    try {
+      const form = await getAdvancedSearchForm({ title: "" });
+      const sections = form.getSections();
+      const json = JSON.stringify(sections);
+      expect(json).to.contain('"title":"Action"');
+      expect(json).to.contain('"title":"Slice of life"');
+      expect(json).to.contain(encodeTagId("genre", "action"));
+      const ids = sections.flatMap((s) => [s.id, ...s.items.map((i) => i.id)]);
+      expect(new Set(ids).size).to.equal(ids.length);
+    } finally {
+      app.scheduleRequest = original;
+    }
   });
 
   suite.test("getAdvancedSearchForm tolerates non-array lookups", async () => {
@@ -957,7 +1058,9 @@ export async function runTests(logger: TestLogger) {
       expect(hero.summary).to.equal("Sum");
       expect(hero.infoItems?.length).to.equal(2);
     }
-    expect(seriesItem(seriesFixture(), "simple").type).to.equal("simpleCarouselItem");
+    const simple = seriesItem(seriesFixture(), "simple");
+    expect(simple.type).to.equal("simpleCarouselItem");
+    expect(simple.type === "simpleCarouselItem" && simple.subtitle).to.equal(undefined);
   });
 
   suite.test("getDiscoverSections lists the six sections and skips hidden ones", async () => {
@@ -1019,6 +1122,7 @@ export async function runTests(logger: TestLogger) {
       expect(requests[0]!.url).to.contain("/api/v1/series/list");
       expect(requests[0]!.url).to.contain("sort=readProgress.readDate%2Cdesc");
       expect(JSON.parse(requests[0]!.body!).condition.allOf).to.deep.equal([
+        { deleted: { operator: "isFalse" } },
         { readStatus: { operator: "is", value: "IN_PROGRESS" } },
         { genre: { operator: "isNot", value: "hentai" } },
         { anyOf: [{ libraryId: { operator: "is", value: "lib1" } }] },
@@ -1448,7 +1552,14 @@ export async function runTests(logger: TestLogger) {
       }
       expect(message).to.equal("Invalid credentials");
       expect(getBaseUrl()).to.equal(before.url);
-      await routeRequests(settingsServer, () => server.formDidSubmit!());
+      const failedCount = await withInvalidateCounter(async () => {
+        await withResponse(401, "", () => server.formDidSubmit!()).catch(() => undefined);
+      });
+      expect(failedCount).to.equal(0);
+      const okCount = await withInvalidateCounter(async () => {
+        await routeRequests(settingsServer, () => server.formDidSubmit!());
+      });
+      expect(okCount).to.equal(1);
       expect(getBaseUrl()).to.equal("https://typed.example");
       expect(getCredentials()).to.deep.equal({ username: "typed-user", password: "typed-pass" });
     } finally {

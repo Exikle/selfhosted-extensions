@@ -19,6 +19,9 @@ export function decodeTagId(id: string): { kind: string; value: string } | undef
   }
 }
 
+export const errorMessage = (err: unknown): string =>
+  err instanceof Error ? err.message : String(err);
+
 export const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

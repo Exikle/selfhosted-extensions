@@ -5,11 +5,9 @@ import type { DiscoverSectionItem } from "@paperback/types";
 
 import { bookThumbnail, seriesThumbnail } from "../../services/network";
 import { parseContentRating } from "../shared/content-rating";
-import type { BookDto, SeriesDto } from "../shared/models";
+import { PAGE_SIZE, type BookDto, type SeriesDto } from "../shared/models";
 import type { SectionStyle } from "../shared/state";
 import { capitalise } from "../shared/utils";
-
-const PAGE_SIZE = 40;
 
 // Komga cannot sort series by unread count, so the sort happens here.
 export const sortNearlyFinished = (series: SeriesDto[]): SeriesDto[] =>
@@ -38,10 +36,13 @@ export function seriesItem(s: SeriesDto, style: SectionStyle): DiscoverSectionIt
       ],
     };
   }
-  const subtitle = `${s.booksReadCount} of ${s.booksCount} read`;
   return style === "large"
-    ? { type: "prominentCarouselItem", ...base, subtitle }
-    : { type: "simpleCarouselItem", ...base, subtitle };
+    ? {
+        type: "prominentCarouselItem",
+        ...base,
+        subtitle: `${s.booksReadCount} of ${s.booksCount} read`,
+      }
+    : { type: "simpleCarouselItem", ...base };
 }
 
 // A tap opens the series; the tile shows the book so you see what is next.

@@ -1,16 +1,15 @@
 # Komga phone test
 
-You need: an iPhone with Paperback 0.9, your Komga server, and the workstation's extension server running (on your Tailscale network or the same LAN).
+You need: an iPhone with Paperback 0.9 and your Komga server.
 
 `npm run test` exits 0 even when tests fail, so read its summary line.
 
 ## Setup
 
 1. On the phone, remove the old Komga extension first.
-2. On the workstation, check the server is up: `systemctl --user status paperback-serve`. No server unit? Run `npm run dev` in `~/selfhosted-extensions` and read the port from the output.
-3. In Paperback, add `http://<workstation>:6770` as a repository. `<workstation>` is its Tailscale name, or its LAN IP from `hostname -I`.
-4. Install Komga (version 4.0.0) from that repository.
-5. Open the Komga settings. Check whether the server URL and login came across.
+2. In Paperback, add `https://exikle.github.io/selfhosted-extensions/0.9/stable` as a repository. Paperback refuses plain `http://` repositories.
+3. Install Komga (version 4.0.0) from that repository.
+4. Open the Komga settings. Check whether the server URL and login came across.
 
 ## Install
 

@@ -17,9 +17,17 @@ import {
   scopeConditions,
   scopeQuery,
 } from "../shared/filters";
-import { PAGE_SIZE, type BookDto, type Page, type SeriesDto } from "../shared/models";
+import {
+  PAGE_SIZE,
+  type BookDto,
+  type CollectionDto,
+  type Page,
+  type ReadListDto,
+  type SeriesDto,
+} from "../shared/models";
 import {
   getIncludeOneshots,
+  getReadListEnabled,
   getSectionStyle,
   getSelectedLibraries,
   type SectionStyle,
@@ -37,8 +45,25 @@ const STYLE_TYPES: Record<Exclude<SectionStyle, "hidden">, DiscoverSectionType> 
 // Sections with one look, switched on or off by a toggle.
 const FIXED_TYPES: Record<string, DiscoverSectionType> = {
   genres: DiscoverSectionType.genres,
+  collections: DiscoverSectionType.genres,
   latestChapters: DiscoverSectionType.chapterUpdates,
 };
+
+const READ_LIST_PREFIX = "readList:";
+
+// Komga answers an unpaged list as a page; accept a bare array too. A failed load is no read lists.
+export async function loadReadLists(): Promise<ReadListDto[]> {
+  try {
+    const response = await komgaFetch<Page<ReadListDto> | ReadListDto[]>("/api/v1/readlists", {
+      query: { unpaged: true },
+    });
+    const rows = Array.isArray(response) ? response : (response?.content ?? []);
+    return rows.filter((r) => typeof r?.id === "string" && typeof r?.name === "string");
+  } catch (err) {
+    console.log(`[Komga] Could not load read lists: ${errorMessage(err)}`);
+    return [];
+  }
+}
 
 export async function getDiscoverSections(): Promise<DiscoverSection[]> {
   const sections: DiscoverSection[] = [];
@@ -50,6 +75,15 @@ export async function getDiscoverSections(): Promise<DiscoverSection[]> {
       title,
       subtitle,
       type: fixedStyle ? (FIXED_TYPES[id] ?? DiscoverSectionType.genres) : STYLE_TYPES[style],
+    });
+  }
+  // A read list deleted on the server is missing here, so its section simply goes away.
+  for (const { id, name } of await loadReadLists()) {
+    if (!getReadListEnabled(id)) continue;
+    sections.push({
+      id: `${READ_LIST_PREFIX}${id}`,
+      title: name,
+      type: DiscoverSectionType.chapterUpdates,
     });
   }
   return sections;
@@ -112,6 +146,23 @@ async function latestChapterItems(page: number): Promise<PagedResults<DiscoverSe
   const { visible, seriesById } = await resolveBookSeries(books);
   const items = visible.map((b) => chapterUpdateItem(b, seriesById.get(b.seriesId)!));
   return withNext(items, books.length, page);
+}
+
+async function readListItems(
+  readListId: string,
+  page: number,
+): Promise<PagedResults<DiscoverSectionItem>> {
+  const result = await komgaFetch<Page<BookDto>>(
+    `/api/v1/readlists/${encodeURIComponent(readListId)}/books`,
+    { query: { page, size: PAGE_SIZE } },
+  );
+  const books = result.content ?? [];
+  const { visible, seriesById } = await resolveBookSeries(books);
+  const items = visible.map((b) => chapterUpdateItem(b, seriesById.get(b.seriesId)!));
+  // Paging follows the server's last flag, so a hidden-only page does not end the list early.
+  return result.last === false && books.length > 0
+    ? { items, metadata: { page: page + 1 } }
+    : { items };
 }
 
 async function keepReadingItems(
@@ -180,13 +231,33 @@ async function genreItems(): Promise<PagedResults<DiscoverSectionItem>> {
   return { items };
 }
 
+async function collectionItems(): Promise<PagedResults<DiscoverSectionItem>> {
+  const result = await komgaFetch<Page<CollectionDto> | CollectionDto[]>("/api/v1/collections", {
+    query: { unpaged: true, library_id: getSelectedLibraries() },
+  });
+  const rows = Array.isArray(result) ? result : (result?.content ?? []);
+  // A tap searches this collection; Best Match with one collection sorts in collection order.
+  const items: DiscoverSectionItem[] = rows.map((c) => ({
+    type: "genresCarouselItem",
+    name: c.name,
+    searchQuery: {
+      title: "",
+      metadata: { filters: { collections: { [encodeTagId("collection", c.id)]: "included" } } },
+    },
+  }));
+  return { items };
+}
+
 export async function getDiscoverSectionItems(
   section: DiscoverSection,
   metadata?: { page?: number },
 ): Promise<PagedResults<DiscoverSectionItem>> {
   try {
-    const style = getSectionStyle(section.id);
     const page = pageOf(metadata);
+    if (section.id.startsWith(READ_LIST_PREFIX)) {
+      return await readListItems(section.id.slice(READ_LIST_PREFIX.length), page);
+    }
+    const style = getSectionStyle(section.id);
     switch (section.id) {
       case "onDeck":
         return await onDeckItems(style, page);
@@ -202,6 +273,8 @@ export async function getDiscoverSectionItems(
         return await feedItems("/api/v1/series/updated", style, page);
       case "genres":
         return await genreItems();
+      case "collections":
+        return await collectionItems();
       default:
         return { items: [] };
     }

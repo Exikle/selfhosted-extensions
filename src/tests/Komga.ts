@@ -70,6 +70,7 @@ import {
   getCredentials,
   getHideAdultContent,
   getIncludeOneshots,
+  getReadListEnabled,
   getSectionStyle,
   getSelectedLibraries,
   setAdultGenres,
@@ -78,6 +79,7 @@ import {
   setCredentials,
   setHideAdultContent,
   setIncludeOneshots,
+  setReadListEnabled,
   setSectionStyle,
   setSelectedLibraries,
 } from "../Komga/implementations/shared/state.js";
@@ -1522,7 +1524,7 @@ export async function runTests(logger: TestLogger) {
     expect(simple.type === "simpleCarouselItem" && simple.subtitle).to.equal(undefined);
   });
 
-  suite.test("getDiscoverSections lists the seven sections and skips hidden ones", async () => {
+  suite.test("getDiscoverSections lists the eight sections and skips hidden ones", async () => {
     expect(DISCOVER_SECTIONS.map((s) => s.id)).to.deep.equal([
       "onDeck",
       "latestChapters",
@@ -1531,6 +1533,7 @@ export async function runTests(logger: TestLogger) {
       "recentlyAdded",
       "recentlyUpdated",
       "genres",
+      "collections",
     ]);
     const saved = getSectionStyle("genres");
     const savedDeck = getSectionStyle("onDeck");
@@ -1919,6 +1922,164 @@ export async function runTests(logger: TestLogger) {
     } finally {
       setSectionStyle("latestChapters", saved);
     }
+  });
+
+  const readListServer =
+    (lists: { id: string; name: string }[], books: Record<string, BookDto[]> = {}) =>
+    (request: { url: string }): string => {
+      if (request.url.includes("/api/v1/readlists?")) return JSON.stringify({ content: lists });
+      const match = /\/api\/v1\/readlists\/([^/]+)\/books/.exec(request.url);
+      if (match) {
+        if (!books[match[1]!]) throw new Error("Not found");
+        return JSON.stringify({ content: books[match[1]!], last: true, number: 0 });
+      }
+      if (request.url.includes("/api/v1/series/list")) {
+        return JSON.stringify({
+          content: [
+            { id: "s1", name: "S1", metadata: { title: "One", genres: [] } },
+            { id: "s2", name: "S2", metadata: { title: "Two", genres: ["Hentai"] } },
+          ],
+        });
+      }
+      return "{}";
+    };
+
+  const withReadLists = async <T>(enabled: Record<string, boolean>, run: () => Promise<T>) => {
+    const ids = ["r1", "r2", "gone"];
+    const saved = ids.map((id) => getReadListEnabled(id));
+    try {
+      ids.forEach((id) => setReadListEnabled(id, enabled[id] ?? false));
+      return await run();
+    } finally {
+      ids.forEach((id, i) => setReadListEnabled(id, saved[i]!));
+    }
+  };
+
+  suite.test("Collections items search the collection by id", async () => {
+    const body = JSON.stringify({ content: [{ id: "c 1", name: "Favourites" }] });
+    const { result, requests } = await captureRequests(body, () =>
+      getDiscoverSectionItems(sectionFor("collections"), undefined),
+    );
+    expect(requests[0]!.url).to.contain("/api/v1/collections");
+    expect(requests[0]!.url).to.contain("unpaged=true");
+    expect(result.items).to.deep.equal([
+      {
+        type: "genresCarouselItem",
+        name: "Favourites",
+        searchQuery: {
+          title: "",
+          metadata: {
+            filters: { collections: { [encodeTagId("collection", "c 1")]: "included" } },
+          },
+        },
+      },
+    ]);
+    const item = result.items[0] as { searchQuery: { title: string; metadata: never } };
+    const filters = (item.searchQuery.metadata as { filters: never }).filters;
+    expect(resolveSort(undefined, item.searchQuery.title, filters)).to.equal(
+      "collection.number,asc",
+    );
+  });
+
+  suite.test("enabled read lists become sections and disabled ones do not", async () => {
+    await withReadLists({ r1: true }, async () => {
+      const { result } = await routeRequests(
+        readListServer([
+          { id: "r1", name: "Summer" },
+          { id: "r2", name: "Winter" },
+        ]),
+        () => getDiscoverSections(),
+      );
+      const list = result.filter((s) => s.id.startsWith("readList:"));
+      expect(list).to.deep.equal([
+        { id: "readList:r1", title: "Summer", type: DiscoverSectionType.chapterUpdates },
+      ]);
+    });
+  });
+
+  suite.test("a failed read list fetch leaves the other sections intact", async () => {
+    await withReadLists({ r1: true }, async () => {
+      const sections = await withResponse(0, new Error("down"), () => getDiscoverSections());
+      expect(sections.map((s) => s.id)).to.include("onDeck");
+      expect(sections.some((s) => s.id.startsWith("readList:"))).to.equal(false);
+    });
+  });
+
+  suite.test("a read list deleted on the server disappears and the others still load", async () => {
+    await withReadLists({ r1: true, gone: true }, async () => {
+      const server = readListServer([{ id: "r1", name: "Summer" }], {
+        r1: [bookFixture({ id: "b1", seriesId: "s1" })],
+      });
+      const { result } = await routeRequests(server, () => getDiscoverSections());
+      expect(result.map((s) => s.id)).to.include("readList:r1");
+      expect(result.map((s) => s.id)).to.not.include("readList:gone");
+      const items = await routeRequests(server, async () => ({
+        gone: await getDiscoverSectionItems(sectionFor("readList:gone"), undefined),
+        r1: await getDiscoverSectionItems(sectionFor("readList:r1"), undefined),
+      }));
+      expect(items.result.gone.items).to.deep.equal([]);
+      expect(items.result.r1.items.length).to.equal(1);
+    });
+  });
+
+  suite.test("read list items keep server order, drop hidden series and page on last", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      setAdultGenres(["Hentai"]);
+      setIncludeOneshots(true);
+      const books = [
+        bookFixture({ id: "b3", seriesId: "s1" }),
+        bookFixture({ id: "b2", seriesId: "s2" }),
+        bookFixture({ id: "b1", seriesId: "s1" }),
+      ];
+      const { result, requests } = await routeRequests(readListServer([], { r1: books }), () =>
+        getDiscoverSectionItems(sectionFor("readList:r1"), { page: 2 }),
+      );
+      expect(requests[0]!.url).to.contain("/api/v1/readlists/r1/books");
+      expect(requests[0]!.url).to.contain("page=2");
+      expect(requests[0]!.url).to.contain("size=40");
+      expect(result.items.map((i) => "chapterId" in i && i.chapterId)).to.deep.equal(["b3", "b1"]);
+      expect(result.metadata).to.equal(undefined);
+      const more = await withResponse(
+        200,
+        JSON.stringify({ content: [books[0]], last: false, number: 0 }),
+        () => getDiscoverSectionItems(sectionFor("readList:r1"), { page: 0 }),
+      ).catch(() => undefined);
+      expect(more?.metadata).to.deep.equal({ page: 1 });
+    });
+  });
+
+  suite.test("homepage read list toggles save and invalidate", async () => {
+    await withReadLists({}, async () => {
+      const { result: form } = await routeRequests(
+        readListServer([
+          { id: "r1", name: "Summer" },
+          { id: "r2", name: "Winter" },
+        ]),
+        async () => {
+          const f = new KomgaHomepageForm() as unknown as SettingsLike;
+          await f.formWillAppear!();
+          return f;
+        },
+      );
+      expect(rowOf(form, "read_list_1").title).to.equal("Winter");
+      const count = await withInvalidateCounter(async () => {
+        await (form.handleReadList_1 as (v: boolean) => Promise<void>)(true);
+      });
+      expect(count).to.equal(1);
+      expect(getReadListEnabled("r2")).to.equal(true);
+      expect(getReadListEnabled("r1")).to.equal(false);
+    });
+  });
+
+  suite.test("homepage shows No read lists when there are none or the fetch fails", async () => {
+    const empty = new KomgaHomepageForm() as unknown as SettingsLike;
+    expect(rowOf(empty, "read_lists_none").title).to.equal("No read lists");
+    await withResponse(0, new Error("down"), async () => {
+      const failed = new KomgaHomepageForm() as unknown as SettingsLike;
+      await failed.formWillAppear!();
+      expect(rowOf(failed, "read_lists_none").title).to.equal("No read lists");
+    });
   });
 
   suite.test("resolveBookSeries sends no request for no books", async () => {

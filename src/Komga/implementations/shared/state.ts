@@ -59,6 +59,10 @@ export const getSectionStyle = (id: string): SectionStyle => {
 export const setSectionStyle = (id: string, style: SectionStyle): void =>
   setKey(`sectionStyle.${id}`, style);
 
+// A read list is off until the user turns it on; unknown ids stay hidden.
+export const getReadListEnabled = (id: string): boolean => getKey(`readList.${id}`, false);
+export const setReadListEnabled = (id: string, on: boolean): void => setKey(`readList.${id}`, on);
+
 export const getSelectedLibraries = (): string[] => getStringArray("selectedLibraries", []);
 export const setSelectedLibraries = (v: string[]): void => setKey("selectedLibraries", v);
 

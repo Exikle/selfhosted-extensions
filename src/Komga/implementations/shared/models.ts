@@ -63,6 +63,8 @@ export type CollectionDto = {
   filtered: boolean;
 };
 
+export type ReadListDto = { id: string; name: string };
+
 export type Page<T> = { content: T[]; last: boolean; number: number };
 
 export type TachiyomiProgressV2 = { lastReadContinuousNumberSort: number };

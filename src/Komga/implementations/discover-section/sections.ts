@@ -5,7 +5,7 @@ export type DiscoverSectionDefinition = {
   id: string;
   title: string;
   subtitle: string;
-  // Genres and Latest Chapters have one look, so it gets no style picker.
+  // Genres, Collections and Latest Chapters have one look, so it gets no style picker.
   fixedStyle?: boolean;
 };
 
@@ -22,4 +22,10 @@ export const DISCOVER_SECTIONS: DiscoverSectionDefinition[] = [
   { id: "recentlyAdded", title: "Recently Added Series", subtitle: "New on your server" },
   { id: "recentlyUpdated", title: "Recently Updated Series", subtitle: "Newly changed series" },
   { id: "genres", title: "Genres", subtitle: "Browse by genre", fixedStyle: true },
+  {
+    id: "collections",
+    title: "Collections",
+    subtitle: "Browse by collection",
+    fixedStyle: true,
+  },
 ];

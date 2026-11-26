@@ -1,10 +1,25 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Exikle */
 
-import { Form, SelectRow, Section, ToggleRow, type FormSectionElement } from "@paperback/types";
+import {
+  Form,
+  LabelRow,
+  SelectRow,
+  Section,
+  ToggleRow,
+  type FormSectionElement,
+} from "@paperback/types";
 
+import { loadReadLists } from "../../discover-section/main";
 import { DISCOVER_SECTIONS } from "../../discover-section/sections";
-import { getSectionStyle, setSectionStyle, type SectionStyle } from "../../shared/state";
+import type { ReadListDto } from "../../shared/models";
+import {
+  getReadListEnabled,
+  getSectionStyle,
+  setReadListEnabled,
+  setSectionStyle,
+  type SectionStyle,
+} from "../../shared/state";
 
 const STYLE_ITEMS: { id: SectionStyle; title: string }[] = [
   { id: "simple", title: "Regular" },
@@ -17,6 +32,9 @@ const isStyle = (value: string | undefined): value is SectionStyle =>
   STYLE_ITEMS.some((item) => item.id === value);
 
 export class KomgaHomepageForm extends Form {
+  // Row ids are built by index; this keeps the read list behind each one.
+  private readLists: ReadListDto[] = [];
+
   constructor() {
     super();
     // One handler per section; Selector looks them up by name on this instance.
@@ -62,7 +80,35 @@ export class KomgaHomepageForm extends Form {
               });
         }),
       ),
+      Section(
+        { id: "read_lists", header: "Read Lists" },
+        this.readLists.length === 0
+          ? [LabelRow("read_lists_none", { title: "No read lists" })]
+          : this.readLists.map(({ id, name }, index) =>
+              ToggleRow(`read_list_${index}`, {
+                title: name,
+                value: getReadListEnabled(id),
+                onValueChange: Application.Selector(
+                  this as KomgaHomepageForm,
+                  `handleReadList_${index}` as never,
+                ) as never,
+              }),
+            ),
+      ),
     ];
+  }
+
+  override async formWillAppear(): Promise<void> {
+    this.readLists = await loadReadLists();
+    this.readLists.forEach(({ id }, index) => {
+      (this as Record<string, unknown>)[`handleReadList_${index}`] = async (
+        on: boolean,
+      ): Promise<void> => {
+        setReadListEnabled(id, on);
+        this.changed();
+      };
+    });
+    this.reloadForm();
   }
 
   private changed(): void {

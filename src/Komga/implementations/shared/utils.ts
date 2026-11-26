@@ -20,3 +20,29 @@ export function decodeTagId(id: string): { kind: string; value: string } | undef
 }
 
 export const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
+const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+// btoa only takes Latin-1, so a non-ASCII password would throw or be mangled. Encode the UTF-8 bytes.
+export function base64EncodeUtf8(text: string): string {
+  // encodeURIComponent writes every non-ASCII byte as %XX (and a literal % as %25).
+  const bytes = encodeURIComponent(text)
+    .split(/(%[0-9A-F]{2})/)
+    .flatMap((part) =>
+      part.length === 3 && part.startsWith("%")
+        ? [parseInt(part.slice(1), 16)]
+        : Array.from(part, (c) => c.charCodeAt(0)),
+    );
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const [a, b, c] = [bytes[i]!, bytes[i + 1], bytes[i + 2]];
+    out += BASE64_CHARS[a >> 2]!;
+    out += BASE64_CHARS[((a & 3) << 4) | ((b ?? 0) >> 4)]!;
+    out += b === undefined ? "=" : BASE64_CHARS[((b & 15) << 2) | ((c ?? 0) >> 6)]!;
+    out += c === undefined ? "=" : BASE64_CHARS[c & 63]!;
+  }
+  return out;
+}
+
+export const basicAuthHeader = (username: string, password: string): string =>
+  `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;

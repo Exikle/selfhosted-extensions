@@ -55,14 +55,21 @@ export async function processTitlesForUpdates(
         query: { page, size: PAGE_SIZE, deleted: false },
       });
       for (const series of result.content) {
-        if (new Date(series.lastModified).getTime() > cutoff) updated.add(series.id);
+        const modified = new Date(series.lastModified).getTime();
+        // A row without a usable date says nothing about the cutoff.
+        if (Number.isNaN(modified)) continue;
+        if (modified > cutoff) updated.add(series.id);
         else complete = true;
       }
       if (result.last) complete = true;
     }
 
     for (const [id, priority] of decideUpdatePriorities(queued, updated, complete)) {
-      await updateManager.setUpdatePriority(id, priority);
+      try {
+        await updateManager.setUpdatePriority(id, priority);
+      } catch {
+        // One title failing must not stop the rest.
+      }
     }
   } catch {
     // A failed check tells us nothing about what changed; every title keeps its default priority.

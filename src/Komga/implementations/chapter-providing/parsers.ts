@@ -6,6 +6,13 @@ import type { Chapter, SourceManga } from "@paperback/types";
 import type { BookDto } from "../shared/models";
 import { parseChapterTitle } from "../shared/titles";
 
+// A blank or non-numeric number would give 0 or NaN, so the sort key stands in.
+function parseChapterNumber(book: BookDto): number {
+  const raw = book.metadata.number?.trim() ?? "";
+  const parsed = raw === "" ? NaN : Number(raw);
+  return Number.isFinite(parsed) ? parsed : book.metadata.numberSort;
+}
+
 export function toChapter(
   book: BookDto,
   seriesLanguage: string | undefined,
@@ -16,7 +23,7 @@ export function toChapter(
     chapterId: book.id,
     sourceManga,
     langCode: seriesLanguage ? seriesLanguage.toUpperCase() : "UNKNOWN",
-    chapNum: Number(book.metadata.number),
+    chapNum: parseChapterNumber(book),
     title: title ?? "",
     volume: volume ?? 0,
     publishDate: new Date(book.metadata.releaseDate ?? book.fileLastModified),

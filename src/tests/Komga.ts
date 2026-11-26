@@ -548,5 +548,60 @@ export async function runTests(logger: TestLogger) {
     expect(Object.fromEntries(calls)).to.deep.equal({ new: "high" });
   });
 
+  suite.test("toChapter falls back to numberSort for a blank or non-numeric number", async () => {
+    const num = (number: string) =>
+      toChapter(book({ metadata: { title: "", number, numberSort: 7.5 } }), "en", sourceManga)
+        .chapNum;
+    expect(num("abc")).to.equal(7.5);
+    expect(num("12a")).to.equal(7.5);
+    expect(num("")).to.equal(7.5);
+    expect(num("12.5")).to.equal(12.5);
+  });
+
+  suite.test("processTitlesForUpdates: an invalid date never completes the walk", async () => {
+    const { manager, calls } = fakeUpdateManager(["new", "unseen"]);
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    let n = 0;
+    app.scheduleRequest = async () => {
+      if (++n > 1) throw new Error("boom");
+      const body = JSON.stringify({
+        content: [
+          { id: "new", lastModified: "2026-06-01T12:00:00Z" },
+          { id: "bad", lastModified: "garbage" },
+        ],
+        last: false,
+        number: 0,
+      });
+      return [{ status: 200, headers: {} }, new TextEncoder().encode(body).buffer];
+    };
+    try {
+      await processTitlesForUpdates(manager, new Date("2026-06-01T11:00:00Z"));
+    } finally {
+      app.scheduleRequest = original;
+    }
+    expect(n).to.equal(2);
+    expect(calls.length).to.equal(0);
+  });
+
+  suite.test(
+    "processTitlesForUpdates: one throwing setUpdatePriority does not stop the rest",
+    async () => {
+      const calls: string[] = [];
+      const manager = {
+        getQueuedItems: () => ["a", "b"].map((id) => ({ mangaId: id }) as unknown as SourceManga),
+        setUpdatePriority: async (id: string) => {
+          calls.push(id);
+          if (id === "a") throw new Error("nope");
+        },
+      } as unknown as UpdateManager;
+      const body = JSON.stringify({ content: [], last: true, number: 0 });
+      await withResponse(200, body, () =>
+        processTitlesForUpdates(manager, new Date("2026-06-01T11:00:00Z")),
+      );
+      expect(calls).to.deep.equal(["a", "b"]);
+    },
+  );
+
   await suite.run();
 }

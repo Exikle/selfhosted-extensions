@@ -394,6 +394,15 @@ export async function runTests(logger: TestLogger) {
     });
   });
 
+  suite.test("toSourceManga sets isWebtoon from the reading direction", async () => {
+    const withDirection = (readingDirection: string): SeriesDto => ({
+      ...series,
+      metadata: { ...series.metadata, readingDirection },
+    });
+    expect(toSourceManga(withDirection("WEBTOON")).mangaInfo.isWebtoon).to.equal(true);
+    expect(toSourceManga(withDirection("LEFT_TO_RIGHT")).mangaInfo.isWebtoon).to.equal(false);
+  });
+
   suite.test("toSourceManga prefers the series summary and omits an unknown total", async () => {
     const { mangaInfo } = toSourceManga({
       ...series,
@@ -1144,7 +1153,7 @@ export async function runTests(logger: TestLogger) {
         getDiscoverSectionItems(sectionFor("keepReading"), undefined),
       );
       expect(requests[0]!.url).to.contain("/api/v1/series/list");
-      expect(requests[0]!.url).to.contain("sort=readProgress.readDate%2Cdesc");
+      expect(requests[0]!.url).to.contain("sort=readDate%2Cdesc");
       expect(JSON.parse(requests[0]!.body!).condition.allOf).to.deep.equal([
         { deleted: { operator: "isFalse" } },
         { readStatus: { operator: "is", value: "IN_PROGRESS" } },

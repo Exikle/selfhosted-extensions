@@ -113,7 +113,7 @@ async function keepReadingItems(
 ): Promise<PagedResults<DiscoverSectionItem>> {
   const result = await komgaFetch<Page<SeriesDto>>("/api/v1/series/list", {
     method: "POST",
-    query: { page, size: PAGE_SIZE, sort: "readProgress.readDate,desc" },
+    query: { page, size: PAGE_SIZE, sort: "readDate,desc" },
     body: inProgressBody(),
   });
   const content = result.content ?? [];

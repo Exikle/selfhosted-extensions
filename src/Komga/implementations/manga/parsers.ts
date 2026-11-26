@@ -63,6 +63,7 @@ export function toSourceManga(series: SeriesDto): SourceManga {
       synopsis: metadata.summary || booksMetadata.summary,
       tagGroups,
       shareUrl: pickShareUrl(metadata.links),
+      isWebtoon: metadata.readingDirection === "WEBTOON",
       additionalInfo: {
         language: metadata.language,
         readingDirection: metadata.readingDirection,

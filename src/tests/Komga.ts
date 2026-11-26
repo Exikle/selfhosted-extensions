@@ -330,6 +330,27 @@ export async function runTests(logger: TestLogger) {
     expect(mangaInfo.additionalInfo).to.not.have.property("totalBooks");
   });
 
+  suite.test("toSourceManga tolerates missing metadata fields", async () => {
+    const bare = {
+      ...series,
+      metadata: {
+        ...series.metadata,
+        summary: "",
+        genres: undefined,
+        tags: undefined,
+        alternateTitles: undefined,
+        links: undefined,
+      },
+      booksMetadata: { summary: "" },
+    } as unknown as SeriesDto;
+    const { mangaInfo } = toSourceManga(bare);
+    expect(mangaInfo.shareUrl).to.equal(undefined);
+    expect(mangaInfo.secondaryTitles).to.deep.equal([]);
+    expect(mangaInfo.tagGroups?.map((group) => group.tags)).to.deep.equal([[], []]);
+    expect(mangaInfo.author).to.equal(undefined);
+    expect(mangaInfo.artist).to.equal(undefined);
+  });
+
   suite.test("getMangaDetails maps 404 to Series not found and keeps other messages", async () => {
     const message = async (status: number): Promise<string> => {
       try {

@@ -11,7 +11,10 @@ import { capitalise, encodeTagId } from "../shared/utils";
 const SHARE_LINK_PREFERENCE = ["anilist", "mangadex", "mangaupdates", "myanimelist"];
 
 // The first link from the preferred sites wins, in that order; any other link is the fallback.
-export function pickShareUrl(links: { label: string; url: string }[]): string | undefined {
+export function pickShareUrl(
+  links: { label: string; url: string }[] | undefined,
+): string | undefined {
+  links ??= [];
   for (const preferred of SHARE_LINK_PREFERENCE) {
     const match = links.find((link) => link.label.toLowerCase().replace(/\s+/g, "") === preferred);
     if (match) return match.url;
@@ -19,11 +22,11 @@ export function pickShareUrl(links: { label: string; url: string }[]): string | 
   return links[0]?.url;
 }
 
-const namesWithRole = (authors: AuthorDto[], role: string): string =>
-  authors
+const namesWithRole = (authors: AuthorDto[] | undefined, role: string): string | undefined =>
+  (authors ?? [])
     .filter((author) => author.role === role)
     .map((author) => author.name)
-    .join(", ");
+    .join(", ") || undefined;
 
 export function toSourceManga(series: SeriesDto): SourceManga {
   const { metadata, booksMetadata } = series;
@@ -32,7 +35,7 @@ export function toSourceManga(series: SeriesDto): SourceManga {
     {
       id: "genres",
       title: "Genres",
-      tags: metadata.genres.map((genre) => ({
+      tags: (metadata.genres ?? []).map((genre) => ({
         id: encodeTagId("genre", genre),
         title: capitalise(genre),
       })),
@@ -40,7 +43,10 @@ export function toSourceManga(series: SeriesDto): SourceManga {
     {
       id: "tags",
       title: "Tags",
-      tags: metadata.tags.map((tag) => ({ id: encodeTagId("tag", tag), title: capitalise(tag) })),
+      tags: (metadata.tags ?? []).map((tag) => ({
+        id: encodeTagId("tag", tag),
+        title: capitalise(tag),
+      })),
     },
   ];
 
@@ -48,7 +54,7 @@ export function toSourceManga(series: SeriesDto): SourceManga {
     mangaId: series.id,
     mangaInfo: {
       primaryTitle: metadata.title,
-      secondaryTitles: metadata.alternateTitles.map((alt) => alt.title),
+      secondaryTitles: (metadata.alternateTitles ?? []).map((alt) => alt.title),
       thumbnailUrl: seriesThumbnail(series.id),
       contentRating: parseContentRating(metadata),
       status: metadata.status.toLowerCase(),

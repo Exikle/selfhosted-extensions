@@ -6,7 +6,7 @@ import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/typ
 export default {
   name: "Komga",
   description: "Extension that pulls content from a self-hosted Komga server.",
-  version: "4.0.1",
+  version: "4.1.0",
   icon: "icon.png",
   language: "multi",
   contentRating: ContentRating.EVERYONE,
@@ -26,8 +26,8 @@ export default {
     },
   ],
   developers: [
+    { name: "Exikle", github: "https://github.com/Exikle" },
     { name: "Faizan Durrani", github: "https://github.com/FaizanDurrani" },
     { name: "Lemon", github: "https://github.com/FramboisePi" },
-    { name: "Exikle", github: "https://github.com/Exikle" },
   ],
 } satisfies ExtensionInfo;

@@ -9,7 +9,7 @@ You need: an iPhone with Paperback 0.9 and your Komga server.
 Paperback upgrades an installed Komga in place (same source id), so settings and library stay.
 
 1. In Paperback, add `https://exikle.github.io/selfhosted-extensions/0.9/stable` as a repository. Paperback refuses plain `http://` repositories.
-2. Install Komga (version 4.0.0) from that repository.
+2. Install Komga (version 4.1.0) from that repository.
 3. Open the Komga settings. Check whether the server URL and login came across.
 
 ## Install
@@ -34,9 +34,9 @@ Paperback upgrades an installed Komga in place (same source id), so settings and
 
 ## Settings: Homepage Settings
 
-- [ ] Rows: On Deck, Keep Reading, Nearly Finished, Recently Added Series, Recently Updated Series, Genres.
-- [ ] Each section but Genres offers Regular, Large, Hero, Hidden.
-- [ ] Genres is an on/off switch.
+- [ ] Rows: On Deck, Latest Chapters, Keep Reading, Nearly Finished, Recently Added Series, Recently Updated Series, Genres, Collections.
+- [ ] Each section but Latest Chapters, Genres and Collections offers Regular, Large, Hero, Hidden.
+- [ ] Latest Chapters, Genres and Collections are on/off switches.
 - [ ] Change a style. Go to Discover. The section changes right away.
 - [ ] Set a section to Hidden. It leaves Discover.
 
@@ -121,6 +121,69 @@ Try Regular, Large and Hero on each section.
 - [ ] Add a new chapter file in Komga. Scan the library in Komga.
 - [ ] In Paperback, refresh the library. The new chapter shows up.
 - [ ] A series with no new chapter does not show as updated.
+
+## 4.1.0: Server Settings and About
+
+- [ ] Server Settings has an "API Key" row. Paste a Komga API key. Username and Password grey out.
+- [ ] With the key set, tap "Test Connection". Footer says "Connected as <email>".
+- [ ] Type a wrong key. Footer says "Invalid API key".
+- [ ] Clear the key. Username and Password turn back on.
+- [ ] Root screen: the "About" section shows "Extension Version" 4.1.0 and "Komga Version".
+- [ ] On a Komga older than 1.19 (if I have one), About shows a warning. Skip if not.
+- [ ] On a Komga older than 1.20 with a key set, About warns "API keys need Komga 1.20 or later". Skip if not.
+
+## 4.1.0: Homepage and Content settings
+
+- [ ] Homepage Settings: each section with a style shows a menu row. Tap it. Regular, Large, Hero and Hidden are in the menu.
+- [ ] Pick a style from the menu. Go to Discover. The section changes right away.
+- [ ] "Read Lists" group lists my read lists, all off. If none, it says "No read lists".
+- [ ] Turn "Hide Adult Content" off. "Genres To Hide" is greyed out.
+- [ ] Turn it on. "Genres To Hide" works again.
+
+## 4.1.0: Home sections
+
+- [ ] "Latest Chapters" shows my newest books. Tap one. The chapter opens.
+- [ ] Latest Chapters follows my library choice and "Include One-Shots".
+- [ ] Keep Reading now puts the series I read last at the front.
+- [ ] "Collections" lists my Komga collections. Tap one. Search opens with it included, in the collection's own order.
+- [ ] Turn on a read list in Homepage Settings. It shows as its own section, in read-list order.
+- [ ] Turn it off. The section leaves Discover.
+
+## 4.1.0: Search
+
+- [ ] Search with text and no sort chosen. The best match comes first ("Best Match" is the first sort).
+- [ ] "Best Match" with no text acts like Title (A-Z).
+- [ ] Filter by Read Status: Unread, In progress, Read. Each matches Komga. There is no exclude.
+- [ ] Filter by Series Status: include one, then exclude one. Results match.
+- [ ] Filter by Publishers, Languages and Age Ratings. Include one, then exclude one.
+- [ ] Age Ratings: include "None". Series with no age rating show.
+- [ ] Type a name in the "Author" box. Results are series by that person.
+- [ ] Sort by "Release Date". Newest release first.
+- [ ] Sort by "Random". Different order each time. No second page.
+
+## 4.1.0: Title page
+
+- [ ] A series shows a "Publishers" tag. Tap it. Search opens with that publisher.
+- [ ] "Creators" lists the authors, each with their roles.
+- [ ] Tap a creator. Search opens with the Author box filled.
+- [ ] A series in a collection shows an "In <collection>" section with the other series.
+- [ ] A series with reading direction Webtoon opens in vertical scroll.
+
+## 4.1.0: Collection sync
+
+Collections sync both ways. Changing them needs an admin account.
+
+- [ ] In Paperback, my Komga collections show up as collections.
+- [ ] Add a series to one in Paperback. Komga shows it in that collection.
+- [ ] Remove a series in Paperback. Komga drops it.
+- [ ] Add a series in Komga. Paperback shows it after a refresh.
+- [ ] Try to remove the last series in a collection. It fails: "Komga collections can't be empty".
+- [ ] With a non-admin account (if I have one), a change fails: "Changing Komga collections needs an admin account". Skip if not.
+
+## 4.1.0: Update check
+
+- [ ] Edit only a series' metadata in Komga. Refresh my library. It does not show as updated.
+- [ ] Add a new chapter file in Komga. Scan. Refresh. The new chapter shows up.
 
 ## When done
 

@@ -26,10 +26,20 @@ export type KomgaFetchOptions = {
   credentials?: { username: string; password: string };
 };
 
-const buildUrl = (base: string, path: string, query?: Record<string, QueryValue>): string => {
-  const url = new URL(base + path);
+export const buildUrl = (
+  base: string,
+  path: string,
+  query?: Record<string, QueryValue>,
+): string => {
+  let url: URL;
+  try {
+    url = new URL(base + path);
+  } catch {
+    // The library's own message would leak its internals; the user typed this base.
+    throw new Error(`Could not reach ${base}`);
+  }
   for (const [key, value] of Object.entries(query ?? {})) {
-    if (value === undefined) continue;
+    if (value === undefined || (Array.isArray(value) && value.length === 0)) continue;
     url.setQueryItem(key, Array.isArray(value) ? value : String(value));
   }
   return url.toString();

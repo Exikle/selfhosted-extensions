@@ -11,7 +11,8 @@ import {
   encodeTagId,
   normaliseBaseUrl,
 } from "../Komga/implementations/shared/utils.js";
-import { pageUrl } from "../Komga/services/network.js";
+import { KomgaInterceptor, shouldAuthorise } from "../Komga/services/interceptor.js";
+import { buildUrl, komgaFetch, pageUrl } from "../Komga/services/network.js";
 import { TestSuite } from "./suite.js";
 
 export async function runTests(logger: TestLogger) {
@@ -127,6 +128,107 @@ export async function runTests(logger: TestLogger) {
     expect(base64EncodeUtf8("ab")).to.equal("YWI=");
     expect(base64EncodeUtf8("é日%")).to.equal("w6nml6Ul");
     expect(basicAuthHeader("u", "p")).to.equal("Basic dTpw");
+  });
+
+  suite.test("shouldAuthorise only matches the own host", async () => {
+    expect(shouldAuthorise("https://k.example/api/v1/x", "https://k.example")).to.equal(true);
+    expect(shouldAuthorise("https://k.example", "https://k.example")).to.equal(true);
+    expect(shouldAuthorise("https://k.example.evil/api", "https://k.example")).to.equal(false);
+    expect(shouldAuthorise("https://other/api", "https://k.example")).to.equal(false);
+    expect(shouldAuthorise("https://k.example/api", "")).to.equal(false);
+  });
+
+  const interceptor = new KomgaInterceptor("test");
+  const own = "https://demo.komga.org";
+  suite.test("interceptor authorises the own host, images included", async () => {
+    for (const path of ["/api/v1/series/s/thumbnail", "/api/v1/books/b/pages/1"]) {
+      const out = await interceptor.interceptRequest({ url: own + path, method: "GET" });
+      expect(out.headers?.["Authorization"]).to.match(/^Basic /);
+    }
+  });
+
+  suite.test("interceptor leaves a look-alike host alone", async () => {
+    const out = await interceptor.interceptRequest({ url: `${own}.evil/api`, method: "GET" });
+    expect(out.headers?.["Authorization"]).to.equal(undefined);
+  });
+
+  suite.test("interceptor keeps an existing Authorization header", async () => {
+    const out = await interceptor.interceptRequest({
+      url: `${own}/api`,
+      method: "GET",
+      headers: { authorization: "Bearer x" },
+    });
+    expect(out.headers).to.deep.equal({ authorization: "Bearer x" });
+  });
+
+  suite.test("buildUrl repeats array keys, skips undefined and empty, and encodes", async () => {
+    const url = buildUrl("https://k", "/api/v1/x", {
+      a: ["1", "2"],
+      b: undefined,
+      c: [],
+      d: "a b&c",
+      e: 3,
+      f: false,
+    });
+    expect(url).to.equal("https://k/api/v1/x?a=1&a=2&d=a%20b%26c&e=3&f=false");
+    expect(buildUrl("https://k", "/p", { c: [], b: undefined })).to.equal("https://k/p");
+  });
+
+  suite.test("buildUrl maps a malformed base to Could not reach", async () => {
+    expect(() => buildUrl("http://[::1", "/p")).to.throw("Could not reach http://[::1");
+  });
+
+  const withResponse = async <T>(
+    status: number,
+    body: string | Error,
+    run: () => Promise<T>,
+  ): Promise<T> => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    app.scheduleRequest = async () => {
+      if (body instanceof Error) throw body;
+      return [{ status, headers: {} }, new TextEncoder().encode(body).buffer];
+    };
+    try {
+      return await run();
+    } finally {
+      app.scheduleRequest = original;
+    }
+  };
+
+  suite.test("checkConnection: 200 with JSON user", async () => {
+    const result = await withResponse(200, '{"email":"a@b.c"}', () => checkConnection(base));
+    expect(result).to.deep.equal({ ok: true, message: "Connected as a@b.c" });
+  });
+
+  suite.test("checkConnection: 200 HTML is not a Komga endpoint", async () => {
+    const result = await withResponse(200, "<html></html>", () => checkConnection(base));
+    expect(result.message).to.equal("That URL is not a Komga API endpoint");
+  });
+
+  suite.test("checkConnection maps 401, 404 and transport failure", async () => {
+    expect((await withResponse(401, "", () => checkConnection(base))).message).to.equal(
+      "Invalid credentials",
+    );
+    expect((await withResponse(404, "<html>", () => checkConnection(base))).message).to.equal(
+      "No Komga server at that URL",
+    );
+    expect(
+      (await withResponse(0, new Error("boom"), () => checkConnection(base))).message,
+    ).to.equal("Could not reach https://x");
+  });
+
+  suite.test("komgaFetch: empty body resolves undefined, empty base throws", async () => {
+    expect(await withResponse(204, "", () => komgaFetch("/p", { baseUrl: base }))).to.equal(
+      undefined,
+    );
+    let message = "";
+    try {
+      await komgaFetch("/p", { baseUrl: "" });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).to.equal("No Komga server set");
   });
 
   await suite.run();

@@ -6,11 +6,14 @@ import { PaperbackInterceptor, type Request, type Response } from "@paperback/ty
 import { getBaseUrl, getCredentials } from "../implementations/shared/state";
 import { basicAuthHeader } from "../implementations/shared/utils";
 
+// The trailing slash stops https://k.example matching https://k.example.evil.test.
+export const shouldAuthorise = (url: string, base: string): boolean =>
+  base !== "" && (url === base || url.startsWith(`${base}/`));
+
 export class KomgaInterceptor extends PaperbackInterceptor {
   override async interceptRequest(request: Request): Promise<Request> {
     const base = getBaseUrl();
-    // The trailing slash stops https://k.example matching https://k.example.evil.test.
-    const ownHost = base !== "" && (request.url === base || request.url.startsWith(`${base}/`));
+    const ownHost = shouldAuthorise(request.url, base);
     const headers = request.headers ?? {};
     const hasAuth = Object.keys(headers).some((k) => k.toLowerCase() === "authorization");
     if (!ownHost || hasAuth) return request;

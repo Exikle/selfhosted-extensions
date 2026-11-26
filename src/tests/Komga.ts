@@ -1,11 +1,25 @@
-import { ContentRating, type TestLogger } from "@paperback/types";
+import {
+  ContentRating,
+  type SourceManga,
+  type TestLogger,
+  type UpdateManager,
+} from "@paperback/types";
 import { expect } from "chai";
 
+import {
+  getChapterDetails,
+  getChapters,
+  processTitlesForUpdates,
+} from "../Komga/implementations/chapter-providing/main.js";
+import {
+  decideUpdatePriorities,
+  toChapter,
+} from "../Komga/implementations/chapter-providing/parsers.js";
 import { getMangaDetails } from "../Komga/implementations/manga/main.js";
 import { pickShareUrl, toSourceManga } from "../Komga/implementations/manga/parsers.js";
 import { checkConnection, classifyConnection } from "../Komga/implementations/shared/connection.js";
 import { parseContentRating } from "../Komga/implementations/shared/content-rating.js";
-import type { SeriesDto } from "../Komga/implementations/shared/models.js";
+import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
 import { chapterLabel, parseChapterTitle } from "../Komga/implementations/shared/titles.js";
 import {
   base64EncodeUtf8,
@@ -362,6 +376,176 @@ export async function runTests(logger: TestLogger) {
     };
     expect(await message(404)).to.equal("Series not found");
     expect(await message(500)).to.equal("Komga returned 500");
+  });
+
+  const sourceManga = {
+    mangaId: "s1",
+    mangaInfo: { additionalInfo: { language: "ja" } },
+  } as unknown as SourceManga;
+  const book = (over: Partial<BookDto> = {}): BookDto => ({
+    id: "b1",
+    seriesId: "s1",
+    seriesTitle: "Series",
+    name: "Book",
+    number: 16,
+    oneshot: false,
+    created: "2026-01-02T00:00:00Z",
+    fileLastModified: "2026-01-01T00:00:00Z",
+    media: { mediaType: "application/zip", pagesCount: 3, status: "READY" },
+    metadata: { title: "", number: "16", numberSort: 16.5 },
+    ...over,
+  });
+
+  suite.test(
+    "decideUpdatePriorities: complete walk skips unseen, partial leaves them",
+    async () => {
+      const full = decideUpdatePriorities(["a", "b"], new Set(["a"]), true);
+      expect(full.get("a")).to.equal("high");
+      expect(full.get("b")).to.equal("skip");
+      const partial = decideUpdatePriorities(["a", "b"], new Set(["a"]), false);
+      expect(partial.get("a")).to.equal("high");
+      expect(partial.has("b")).to.equal(false);
+    },
+  );
+
+  suite.test("toChapter maps title, volume, language and dates", async () => {
+    const chapter = toChapter(
+      book({ metadata: { title: "Vol.02 Ch.016 - The Aria", number: "16", numberSort: 16.5 } }),
+      "",
+      sourceManga,
+    );
+    expect(chapter.title).to.equal("The Aria");
+    expect(chapter.volume).to.equal(2);
+    expect(chapter.langCode).to.equal("UNKNOWN");
+    expect(chapter.chapNum).to.equal(16);
+    expect(chapter.sortingIndex).to.equal(16.5);
+    expect(chapter.creationDate?.toISOString()).to.equal("2026-01-02T00:00:00.000Z");
+    expect(chapter.publishDate?.toISOString()).to.equal("2026-01-01T00:00:00.000Z");
+    expect(chapter.chapterId).to.equal("b1");
+  });
+
+  suite.test(
+    "toChapter: no title gives empty title and volume 0, upper-cases language",
+    async () => {
+      const chapter = toChapter(book(), "en", sourceManga);
+      expect(chapter.title).to.equal("");
+      expect(chapter.volume).to.equal(0);
+      expect(chapter.langCode).to.equal("EN");
+    },
+  );
+
+  suite.test("toChapter: releaseDate wins over fileLastModified", async () => {
+    const chapter = toChapter(
+      book({ metadata: { title: "", number: "16", numberSort: 16, releaseDate: "2025-05-05" } }),
+      "en",
+      sourceManga,
+    );
+    expect(chapter.publishDate?.toISOString()).to.equal("2025-05-05T00:00:00.000Z");
+  });
+
+  suite.test("getChapters posts the allOf condition and maps books", async () => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    const requests: { url: string; method?: string; body?: string }[] = [];
+    app.scheduleRequest = async (req: { url: string; method?: string; body?: string }) => {
+      requests.push(req);
+      const body = JSON.stringify({ content: [book()], last: true, number: 0 });
+      return [{ status: 200, headers: {} }, new TextEncoder().encode(body).buffer];
+    };
+    try {
+      const chapters = await getChapters(sourceManga);
+      expect(chapters.length).to.equal(1);
+      expect(chapters[0]!.langCode).to.equal("JA");
+      expect(requests.length).to.equal(1);
+      expect(requests[0]!.method).to.equal("POST");
+      expect(requests[0]!.url).to.contain("/api/v1/books/list");
+      expect(requests[0]!.url).to.contain("unpaged=true");
+      expect(JSON.parse(requests[0]!.body!)).to.deep.equal({
+        condition: {
+          allOf: [
+            { seriesId: { operator: "is", value: "s1" } },
+            { deleted: { operator: "isFalse" } },
+            { mediaStatus: { operator: "is", value: "READY" } },
+          ],
+        },
+      });
+    } finally {
+      app.scheduleRequest = original;
+    }
+  });
+
+  suite.test("getChapterDetails builds page urls, converting unsupported types", async () => {
+    const pages = JSON.stringify([
+      { number: 1, mediaType: "image/jpeg" },
+      { number: 2, mediaType: "image/avif" },
+    ]);
+    const chapter = toChapter(book(), "en", sourceManga);
+    const details = await withResponse(200, pages, () => getChapterDetails(chapter));
+    expect(details.id).to.equal("b1");
+    expect(details.mangaId).to.equal("s1");
+    const urls = (details as { pages: string[] }).pages;
+    expect(urls.length).to.equal(2);
+    expect(urls[0]).to.match(/\/api\/v1\/books\/b1\/pages\/1$/);
+    expect(urls[1]).to.match(/\/api\/v1\/books\/b1\/pages\/2\?convert=png$/);
+  });
+
+  const fakeUpdateManager = (queued: string[]) => {
+    const calls: [string, string][] = [];
+    const manager = {
+      getQueuedItems: () => queued.map((id) => ({ mangaId: id }) as unknown as SourceManga),
+      setUpdatePriority: async (id: string, priority: string) => {
+        calls.push([id, priority]);
+      },
+    } as unknown as UpdateManager;
+    return { manager, calls };
+  };
+
+  suite.test("processTitlesForUpdates: newer series high, other queued skip", async () => {
+    const { manager, calls } = fakeUpdateManager(["new", "old", "other"]);
+    const body = JSON.stringify({
+      content: [
+        { id: "new", lastModified: "2026-06-01T12:00:00Z" },
+        { id: "old", lastModified: "2026-06-01T09:00:00Z" },
+      ],
+      last: false,
+      number: 0,
+    });
+    await withResponse(200, body, () =>
+      processTitlesForUpdates(manager, new Date("2026-06-01T11:00:00Z")),
+    );
+    expect(Object.fromEntries(calls)).to.deep.equal({ new: "high", old: "skip", other: "skip" });
+  });
+
+  suite.test("processTitlesForUpdates: a failed request changes nothing", async () => {
+    const { manager, calls } = fakeUpdateManager(["a"]);
+    await withResponse(0, new Error("boom"), () =>
+      processTitlesForUpdates(manager, new Date("2026-06-01T11:00:00Z")),
+    );
+    await withResponse(500, "", () =>
+      processTitlesForUpdates(manager, new Date("2026-06-01T11:00:00Z")),
+    );
+    expect(calls.length).to.equal(0);
+  });
+
+  suite.test("processTitlesForUpdates: nothing queued or no date does nothing", async () => {
+    const empty = fakeUpdateManager([]);
+    await withResponse(200, "{}", () => processTitlesForUpdates(empty.manager, new Date()));
+    const noDate = fakeUpdateManager(["a"]);
+    await withResponse(200, "{}", () => processTitlesForUpdates(noDate.manager));
+    expect(empty.calls.length + noDate.calls.length).to.equal(0);
+  });
+
+  suite.test("processTitlesForUpdates: the 50-page cap leaves unseen series alone", async () => {
+    const { manager, calls } = fakeUpdateManager(["new", "unseen"]);
+    const body = JSON.stringify({
+      content: [{ id: "new", lastModified: "2026-06-01T12:00:00Z" }],
+      last: false,
+      number: 0,
+    });
+    await withResponse(200, body, () =>
+      processTitlesForUpdates(manager, new Date("2026-06-01T11:00:00Z")),
+    );
+    expect(Object.fromEntries(calls)).to.deep.equal({ new: "high" });
   });
 
   await suite.run();

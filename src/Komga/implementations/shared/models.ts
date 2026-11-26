@@ -27,6 +27,7 @@ export type SeriesDto = {
   libraryId: string;
   name: string;
   oneshot: boolean;
+  lastModified: string;
   booksCount: number;
   booksReadCount: number;
   booksUnreadCount: number;
@@ -43,7 +44,8 @@ export type BookDto = {
   number: number;
   oneshot: boolean;
   created: string;
-  media: { mediaType: string; pagesCount: number };
+  fileLastModified: string;
+  media: { mediaType: string; pagesCount: number; status: string };
   metadata: { title: string; number: string; numberSort: number; releaseDate?: string };
   readProgress?: { completed: boolean; page: number };
 };

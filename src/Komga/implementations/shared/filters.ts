@@ -14,14 +14,15 @@ export const hiddenGenreConditions = (): object[] =>
     ? getAdultGenres().map((genre) => ({ genre: { operator: "isNot", value: genre } }))
     : [];
 
-export const scopeConditions = (): object[] => {
-  const conditions: object[] = [];
+export const libraryConditions = (): object[] => {
   const libraries = getSelectedLibraries();
-  if (libraries.length > 0) {
-    conditions.push({
-      anyOf: libraries.map((id) => ({ libraryId: { operator: "is", value: id } })),
-    });
-  }
+  return libraries.length > 0
+    ? [{ anyOf: libraries.map((id) => ({ libraryId: { operator: "is", value: id } })) }]
+    : [];
+};
+
+export const scopeConditions = (): object[] => {
+  const conditions = libraryConditions();
   if (!getIncludeOneshots()) conditions.push({ oneShot: { operator: "isFalse" } });
   return conditions;
 };

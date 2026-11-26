@@ -2317,8 +2317,62 @@ export async function runTests(logger: TestLogger) {
     expect(list.url).to.contain("sort=collection.number%2Casc");
     expect(list.url).to.contain("size=21");
     expect(JSON.parse(list.body ?? "{}")).to.deep.equal({
-      condition: { collectionId: { operator: "is", value: "c1" } },
+      condition: { allOf: [{ collectionId: { operator: "is", value: "c1" } }] },
     });
+  });
+
+  suite.test("relation rows apply hidden genres and library scope but not one-shots", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      setAdultGenres(["Hentai"]);
+      setSelectedLibraries(["l1", "l2"]);
+      setIncludeOneshots(false);
+      const { requests } = await routeRequests(
+        (request) =>
+          request.url.includes("/series/s1/collections")
+            ? JSON.stringify([{ id: "c1", name: "A" }])
+            : JSON.stringify({ content: [], last: true }),
+        () => relationSections("s1"),
+      );
+      const list = requests.find((r) => r.url.includes("/series/list"))!;
+      expect(JSON.parse(list.body ?? "{}")).to.deep.equal({
+        condition: {
+          allOf: [
+            { collectionId: { operator: "is", value: "c1" } },
+            { genre: { operator: "isNot", value: "hentai" } },
+            {
+              anyOf: [
+                { libraryId: { operator: "is", value: "l1" } },
+                { libraryId: { operator: "is", value: "l2" } },
+              ],
+            },
+          ],
+        },
+      });
+      expect(list.body).to.not.contain("oneShot");
+    });
+  });
+
+  suite.test("a collection holding only the series itself gives no section", async () => {
+    const { result } = await routeRequests(
+      (request) =>
+        request.url.includes("/series/s1/collections")
+          ? JSON.stringify([{ id: "c1", name: "A" }])
+          : JSON.stringify({ content: [{ id: "s1", metadata: { title: "Me" } }], last: true }),
+      () => relationSections("s1"),
+    );
+    expect(result).to.deep.equal([]);
+  });
+
+  suite.test("extras is unset without authors and collections", async () => {
+    const { result } = await routeRequests(
+      (request) =>
+        request.url.includes("/collections")
+          ? "[]"
+          : JSON.stringify({ ...series, booksMetadata: { summary: "", authors: [] } }),
+      () => getMangaDetails("s1"),
+    );
+    expect(result.mangaInfo.extras).to.equal(undefined);
   });
 
   suite.test("relationSections gives one section per collection", async () => {

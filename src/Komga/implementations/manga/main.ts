@@ -4,6 +4,7 @@
 import type { MangaInfoExtra, MangaInfoRelationSection, SourceManga } from "@paperback/types";
 
 import { KomgaHttpError, komgaFetch, seriesThumbnail } from "../../services/network";
+import { hiddenGenreConditions, libraryConditions } from "../shared/filters";
 import type { CollectionDto, Page, SeriesDto } from "../shared/models";
 import { errorMessage } from "../shared/utils";
 import { staffSection, toSourceManga } from "./parsers";
@@ -21,7 +22,15 @@ export async function relationSections(seriesId: string): Promise<MangaInfoRelat
           const page = await komgaFetch<Page<SeriesDto>>("/api/v1/series/list", {
             method: "POST",
             query: { sort: "collection.number,asc", size: RELATION_LIMIT + 1 },
-            body: { condition: { collectionId: { operator: "is", value: collection.id } } },
+            body: {
+              condition: {
+                allOf: [
+                  { collectionId: { operator: "is", value: collection.id } },
+                  ...hiddenGenreConditions(),
+                  ...libraryConditions(),
+                ],
+              },
+            },
           });
           const items = (page.content ?? [])
             .filter((series) => series.id !== seriesId)

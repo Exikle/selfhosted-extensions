@@ -12,6 +12,11 @@ import {
   getDiscoverSectionItems,
   getDiscoverSections,
 } from "./implementations/discover-section/main";
+import {
+  applyManagedCollectionChanges,
+  getManagedCollectionItems,
+  getManagedCollections,
+} from "./implementations/managed-collection/main";
 import { getMangaDetails } from "./implementations/manga/main";
 import {
   getMangaProgress,
@@ -40,6 +45,9 @@ export class KomgaExtension implements ExtensionImpl<typeof KomgaConfig> {
   getSortingOptions = getSortingOptions;
   getAdvancedSearchForm = getAdvancedSearchForm;
   getSettingsForm = getSettingsForm;
+  getManagedCollections = getManagedCollections;
+  getManagedCollectionItems = getManagedCollectionItems;
+  applyManagedCollectionChanges = applyManagedCollectionChanges;
   getMangaProgress = getMangaProgress;
   getMangaProgressManagementForm = getMangaProgressManagementForm;
   processChapterReadActionQueue = processChapterReadActionQueue;

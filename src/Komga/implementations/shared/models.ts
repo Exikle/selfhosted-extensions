@@ -56,10 +56,15 @@ export type PageDto = { number: number; mediaType: string };
 
 export type LibraryDto = { id: string; name: string };
 
-export type CollectionDto = { id: string; name: string };
+export type CollectionDto = {
+  id: string;
+  name: string;
+  seriesIds: string[];
+  filtered: boolean;
+};
 
 export type Page<T> = { content: T[]; last: boolean; number: number };
 
 export type TachiyomiProgressV2 = { lastReadContinuousNumberSort: number };
 
-export type UserDto = { email?: string };
+export type UserDto = { email?: string; roles?: string[] };

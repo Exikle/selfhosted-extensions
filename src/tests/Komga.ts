@@ -2,6 +2,7 @@ import {
   ContentRating,
   type DiscoverSection,
   DiscoverSectionType,
+  SourceIntents,
   type SourceManga,
   type TestLogger,
   type UpdateManager,
@@ -29,6 +30,11 @@ import {
   getDiscoverSections,
 } from "../Komga/implementations/discover-section/main.js";
 import { DISCOVER_SECTIONS } from "../Komga/implementations/discover-section/sections.js";
+import {
+  applyManagedCollectionChanges,
+  getManagedCollectionItems,
+  getManagedCollections,
+} from "../Komga/implementations/managed-collection/main.js";
 import { getMangaDetails } from "../Komga/implementations/manga/main.js";
 import { pickShareUrl, toSourceManga } from "../Komga/implementations/manga/parsers.js";
 import {
@@ -2441,6 +2447,199 @@ export async function runTests(logger: TestLogger) {
       () => komgaFetch("/api/v1/x", { baseUrl: "https://x.example//" }),
     );
     expect(requests[0]!.url).to.equal("https://x.example/api/v1/x");
+  });
+
+  type CollectionState = { seriesIds: string[]; filtered?: boolean };
+  const collectionServer = async (
+    admin: boolean,
+    collections: Record<string, CollectionState>,
+    patchStatus: Record<string, number> = {},
+    run: () => Promise<unknown>,
+  ) => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    const requests: { url: string; method?: string; body?: string }[] = [];
+    app.scheduleRequest = async (request: { url: string; method?: string; body?: string }) => {
+      requests.push(request);
+      let status = 200;
+      let body: unknown = {};
+      const match = /\/api\/v1\/collections\/([^/?]+)$/.exec(request.url);
+      if (request.url.endsWith("/api/v2/users/me")) {
+        body = { roles: admin ? ["ADMIN", "USER"] : ["USER"] };
+      } else if (match) {
+        if (request.method === "PATCH") status = patchStatus[match[1]!] ?? 200;
+        else body = { id: match[1], name: match[1], filtered: false, ...collections[match[1]!] };
+      }
+      return [{ status, headers: {} }, new TextEncoder().encode(JSON.stringify(body)).buffer];
+    };
+    let thrown: Error | undefined;
+    let result: unknown;
+    try {
+      result = await run();
+    } catch (error) {
+      thrown = error as Error;
+    } finally {
+      app.scheduleRequest = original;
+    }
+    return { requests, thrown, result };
+  };
+
+  const col = (id: string): { id: string; title: string } => ({ id, title: id });
+  const manga = (id: string) => ({ mangaId: id }) as SourceManga;
+  const patches = (requests: { url: string; method?: string; body?: string }[]) =>
+    requests
+      .filter((r) => r.method === "PATCH")
+      .map((r) => ({ url: r.url.split("/api/v1/collections/")[1], body: JSON.parse(r.body!) }));
+
+  suite.test(
+    "collection changes: a non-admin account fails every change and sends no PATCH",
+    async () => {
+      const { requests, thrown } = await collectionServer(
+        false,
+        { c1: { seriesIds: ["a", "b"] } },
+        {},
+        () =>
+          applyManagedCollectionChanges([
+            { id: "1", type: "add", to: col("c1"), sourceManga: manga("x") },
+            { id: "2", type: "remove", from: col("c1"), sourceManga: manga("a") },
+          ]),
+      );
+      expect(thrown?.message).to.contain("Changing Komga collections needs an admin account");
+      expect(patches(requests)).to.deep.equal([]);
+      expect(requests.length).to.equal(1);
+    },
+  );
+
+  suite.test("collection changes: add and remove on one collection send one PATCH", async () => {
+    const { requests, thrown, result } = await collectionServer(
+      true,
+      { c1: { seriesIds: ["a", "b"] } },
+      {},
+      () =>
+        applyManagedCollectionChanges([
+          { id: "1", type: "add", to: col("c1"), sourceManga: manga("x") },
+          { id: "2", type: "remove", from: col("c1"), sourceManga: manga("a") },
+        ]),
+    );
+    expect(thrown).to.equal(undefined);
+    expect(result).to.deep.equal([]);
+    expect(
+      requests.filter((r) => r.url.endsWith("collections/c1") && r.method !== "PATCH").length,
+    ).to.equal(1);
+    expect(patches(requests)).to.deep.equal([{ url: "c1", body: { seriesIds: ["b", "x"] } }]);
+  });
+
+  suite.test("collection changes: a move patches both collections", async () => {
+    const { requests, result } = await collectionServer(
+      true,
+      { c1: { seriesIds: ["a", "b"] }, c2: { seriesIds: ["z"] } },
+      {},
+      () =>
+        applyManagedCollectionChanges([
+          { id: "1", type: "move", from: col("c1"), to: col("c2"), sourceManga: manga("a") },
+        ]),
+    );
+    expect(result).to.deep.equal([]);
+    expect(patches(requests)).to.deep.equal([
+      { url: "c1", body: { seriesIds: ["b"] } },
+      { url: "c2", body: { seriesIds: ["z", "a"] } },
+    ]);
+  });
+
+  suite.test("collection changes: emptying a collection fails but the rest apply", async () => {
+    const { requests, thrown, result } = await collectionServer(
+      true,
+      { c1: { seriesIds: ["a"] }, c2: { seriesIds: ["z"] } },
+      {},
+      () =>
+        applyManagedCollectionChanges([
+          { id: "1", type: "remove", from: col("c1"), sourceManga: manga("a") },
+          { id: "2", type: "add", to: col("c2"), sourceManga: manga("y") },
+        ]),
+    );
+    expect(thrown).to.equal(undefined);
+    expect(result).to.deep.equal([{ changeId: "1", reason: "Komga collections can't be empty" }]);
+    expect(patches(requests)).to.deep.equal([{ url: "c2", body: { seriesIds: ["z", "y"] } }]);
+  });
+
+  suite.test(
+    "collection changes: a filtered collection fails every change and sends no PATCH",
+    async () => {
+      const { requests, thrown, result } = await collectionServer(
+        true,
+        { c1: { seriesIds: ["a", "b"], filtered: true }, c2: { seriesIds: ["z"] } },
+        {},
+        () =>
+          applyManagedCollectionChanges([
+            { id: "1", type: "add", to: col("c1"), sourceManga: manga("x") },
+            { id: "2", type: "remove", from: col("c1"), sourceManga: manga("a") },
+            { id: "3", type: "add", to: col("c2"), sourceManga: manga("y") },
+          ]),
+      );
+      expect(thrown).to.equal(undefined);
+      const reason = "This collection has series your account can't see";
+      expect(result).to.deep.equal([
+        { changeId: "1", reason },
+        { changeId: "2", reason },
+      ]);
+      expect(patches(requests).map((p) => p.url)).to.deep.equal(["c2"]);
+    },
+  );
+
+  suite.test(
+    "collection changes: a PATCH error fails its changes, and throws only if all failed",
+    async () => {
+      const some = await collectionServer(
+        true,
+        { c1: { seriesIds: ["a"] }, c2: { seriesIds: ["z"] } },
+        { c1: 500 },
+        () =>
+          applyManagedCollectionChanges([
+            { id: "1", type: "add", to: col("c1"), sourceManga: manga("x") },
+            { id: "2", type: "add", to: col("c2"), sourceManga: manga("y") },
+          ]),
+      );
+      expect(some.thrown).to.equal(undefined);
+      expect(some.result).to.deep.equal([{ changeId: "1", reason: "Komga returned 500" }]);
+      const all = await collectionServer(true, { c1: { seriesIds: ["a"] } }, { c1: 500 }, () =>
+        applyManagedCollectionChanges([
+          { id: "1", type: "add", to: col("c1"), sourceManga: manga("x") },
+        ]),
+      );
+      expect(all.thrown?.message).to.contain("Komga returned 500");
+    },
+  );
+
+  suite.test("getManagedCollections maps names and returns [] on error", async () => {
+    const ok = await withResponse(
+      200,
+      JSON.stringify({ content: [{ id: "c1", name: "Faves" }], last: true, number: 0 }),
+      () => getManagedCollections(),
+    );
+    expect(ok).to.deep.equal([{ id: "c1", title: "Faves" }]);
+    expect(await withResponse(500, "", () => getManagedCollections())).to.deep.equal([]);
+  });
+
+  suite.test(
+    "getManagedCollectionItems maps series and gives [] for a failed collection",
+    async () => {
+      const { result } = await routeRequests(
+        () =>
+          JSON.stringify({
+            content: [seriesFixture({ id: "s1", booksMetadata: { authors: [], summary: "" } })],
+          }),
+        () => getManagedCollectionItems([col("c1")]),
+      );
+      expect(result[0]!.collectionId).to.equal("c1");
+      expect(result[0]!.items.map((m) => m.mangaId)).to.deep.equal(["s1"]);
+      const failed = await withResponse(500, "", () => getManagedCollectionItems([col("c1")]));
+      expect(failed).to.deep.equal([{ collectionId: "c1", items: [] }]);
+    },
+  );
+
+  suite.test("the extension advertises and implements managed collections", async () => {
+    expect(sourceInfo.capabilities).to.include(SourceIntents.MANAGED_COLLECTION_PROVIDING);
+    expect(Komga.applyManagedCollectionChanges).to.equal(applyManagedCollectionChanges);
   });
 
   await suite.run();

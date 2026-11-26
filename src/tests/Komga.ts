@@ -1,5 +1,7 @@
 import {
   ContentRating,
+  type DiscoverSection,
+  DiscoverSectionType,
   type SourceManga,
   type TestLogger,
   type UpdateManager,
@@ -15,6 +17,16 @@ import {
   decideUpdatePriorities,
   toChapter,
 } from "../Komga/implementations/chapter-providing/parsers.js";
+import {
+  onDeckItem,
+  seriesItem,
+  sortNearlyFinished,
+} from "../Komga/implementations/discover-section/items.js";
+import {
+  getDiscoverSectionItems,
+  getDiscoverSections,
+} from "../Komga/implementations/discover-section/main.js";
+import { DISCOVER_SECTIONS } from "../Komga/implementations/discover-section/sections.js";
 import { getMangaDetails } from "../Komga/implementations/manga/main.js";
 import { pickShareUrl, toSourceManga } from "../Komga/implementations/manga/parsers.js";
 import { KomgaSearchForm } from "../Komga/implementations/search-results/forms.js";
@@ -33,10 +45,12 @@ import {
   getAdultGenres,
   getHideAdultContent,
   getIncludeOneshots,
+  getSectionStyle,
   getSelectedLibraries,
   setAdultGenres,
   setHideAdultContent,
   setIncludeOneshots,
+  setSectionStyle,
   setSelectedLibraries,
 } from "../Komga/implementations/shared/state.js";
 import { chapterLabel, parseChapterTitle } from "../Komga/implementations/shared/titles.js";
@@ -867,6 +881,280 @@ export async function runTests(logger: TestLogger) {
     const form = await withResponse(200, '{"a":1}', () => getAdvancedSearchForm({ title: "" }));
     expect(form.getSections().length).to.equal(4);
   });
+
+  const seriesFixture = (over: Partial<SeriesDto> = {}): SeriesDto =>
+    ({
+      id: "s1",
+      name: "Name",
+      booksCount: 10,
+      booksReadCount: 2,
+      booksUnreadCount: 8,
+      metadata: {
+        title: "Title",
+        summary: "Sum",
+        status: "ONGOING",
+        publisher: "Pub",
+        genres: [],
+      },
+      ...over,
+    }) as unknown as SeriesDto;
+
+  const bookFixture = (over: Partial<BookDto> = {}): BookDto =>
+    ({
+      id: "b1",
+      seriesId: "s1",
+      seriesTitle: "Series",
+      name: "Book",
+      oneshot: false,
+      media: { pagesCount: 30 },
+      metadata: { title: "Chapter 1" },
+      ...over,
+    }) as unknown as BookDto;
+
+  suite.test("sortNearlyFinished keeps unread series, fewest unread first", async () => {
+    const input = [5, 0, 1, 3].map((n) => seriesFixture({ booksUnreadCount: n }));
+    expect(sortNearlyFinished(input).map((s) => s.booksUnreadCount)).to.deep.equal([1, 3, 5]);
+  });
+
+  suite.test("sortNearlyFinished takes the first 40", async () => {
+    const input = Array.from({ length: 60 }, (_, i) => seriesFixture({ booksUnreadCount: i + 1 }));
+    expect(sortNearlyFinished(input).length).to.equal(40);
+  });
+
+  suite.test("onDeckItem builds the item type for each style", async () => {
+    expect(onDeckItem(bookFixture(), "hero").type).to.equal("featuredCarouselItem");
+    expect(onDeckItem(bookFixture(), "large").type).to.equal("prominentCarouselItem");
+    expect(onDeckItem(bookFixture(), "simple").type).to.equal("simpleCarouselItem");
+    const item = onDeckItem(bookFixture(), "simple");
+    expect(item.type === "simpleCarouselItem" && item.title).to.equal("Chapter 1");
+    expect(item.type === "simpleCarouselItem" && item.mangaId).to.equal("s1");
+  });
+
+  suite.test("seriesItem subtitles and hero details", async () => {
+    const large = seriesItem(seriesFixture(), "large");
+    expect(large.type === "prominentCarouselItem" && large.subtitle).to.equal("2 of 10 read");
+    const hero = seriesItem(seriesFixture(), "hero");
+    expect(hero.type).to.equal("featuredCarouselItem");
+    if (hero.type === "featuredCarouselItem") {
+      expect(hero.summary).to.equal("Sum");
+      expect(hero.infoItems?.length).to.equal(2);
+    }
+    expect(seriesItem(seriesFixture(), "simple").type).to.equal("simpleCarouselItem");
+  });
+
+  suite.test("getDiscoverSections lists the six sections and skips hidden ones", async () => {
+    expect(DISCOVER_SECTIONS.map((s) => s.id)).to.deep.equal([
+      "onDeck",
+      "keepReading",
+      "nearlyFinished",
+      "recentlyAdded",
+      "recentlyUpdated",
+      "genres",
+    ]);
+    const saved = getSectionStyle("genres");
+    const savedDeck = getSectionStyle("onDeck");
+    try {
+      setSectionStyle("genres", "hidden");
+      setSectionStyle("onDeck", "hero");
+      const sections = await getDiscoverSections();
+      expect(sections.map((s) => s.id)).to.not.include("genres");
+      expect(sections.find((s) => s.id === "onDeck")?.type).to.equal(DiscoverSectionType.featured);
+      setSectionStyle("genres", "large");
+      const again = await getDiscoverSections();
+      expect(again.find((s) => s.id === "genres")?.type).to.equal(DiscoverSectionType.genres);
+    } finally {
+      setSectionStyle("genres", saved);
+      setSectionStyle("onDeck", savedDeck);
+    }
+  });
+
+  const sectionFor = (id: string): DiscoverSection => ({
+    id,
+    title: id,
+    type: DiscoverSectionType.simpleCarousel,
+  });
+
+  suite.test("getDiscoverSectionItems returns empty items on any error", async () => {
+    for (const { id } of DISCOVER_SECTIONS) {
+      const result = await withResponse(0, new Error("down"), () =>
+        getDiscoverSectionItems(sectionFor(id), undefined),
+      );
+      expect(result).to.deep.equal({ items: [] });
+    }
+    const http = await withResponse(500, "", () =>
+      getDiscoverSectionItems(sectionFor("keepReading"), undefined),
+    );
+    expect(http).to.deep.equal({ items: [] });
+    const unknown = await getDiscoverSectionItems(sectionFor("nope"), undefined);
+    expect(unknown).to.deep.equal({ items: [] });
+  });
+
+  suite.test("Keep Reading body carries read status, hidden genres and scope", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      setAdultGenres(["Hentai"]);
+      setSelectedLibraries(["lib1"]);
+      setIncludeOneshots(false);
+      const { requests } = await captureRequests(seriesJson(0), () =>
+        getDiscoverSectionItems(sectionFor("keepReading"), undefined),
+      );
+      expect(requests[0]!.url).to.contain("/api/v1/series/list");
+      expect(requests[0]!.url).to.contain("sort=readProgress.readDate%2Cdesc");
+      expect(JSON.parse(requests[0]!.body!).condition.allOf).to.deep.equal([
+        { readStatus: { operator: "is", value: "IN_PROGRESS" } },
+        { genre: { operator: "isNot", value: "hentai" } },
+        { anyOf: [{ libraryId: { operator: "is", value: "lib1" } }] },
+        { oneShot: { operator: "isFalse" } },
+      ]);
+    });
+  });
+
+  suite.test("Keep Reading pages by 40 and Nearly Finished is one page", async () => {
+    const full = await captureRequests(seriesJson(40), () =>
+      getDiscoverSectionItems(sectionFor("keepReading"), { page: 1 }),
+    );
+    expect(full.result.metadata).to.deep.equal({ page: 2 });
+    expect(full.requests[0]!.url).to.contain("page=1");
+    const short = await captureRequests(seriesJson(3), () =>
+      getDiscoverSectionItems(sectionFor("keepReading"), undefined),
+    );
+    expect(short.result.metadata).to.equal(undefined);
+    const nearly = await captureRequests(seriesJson(40), () =>
+      getDiscoverSectionItems(sectionFor("nearlyFinished"), undefined),
+    );
+    expect(nearly.result.metadata).to.equal(undefined);
+    expect(nearly.requests[0]!.url).to.contain("unpaged=true");
+  });
+
+  const onDeckSetup = (books: BookDto[], hiddenSeriesIds: string[]) => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    const requests: { url: string; body?: string }[] = [];
+    const reply = (data: unknown) => [
+      { status: 200, headers: {} },
+      new TextEncoder().encode(JSON.stringify(data)).buffer,
+    ];
+    app.scheduleRequest = async (request: { url: string; body?: string }) => {
+      requests.push(request);
+      if (request.url.includes("/books/ondeck")) return reply({ content: books });
+      return reply({ content: hiddenSeriesIds.map((id) => ({ id })) });
+    };
+    return {
+      requests,
+      restore: () => {
+        app.scheduleRequest = original;
+      },
+    };
+  };
+
+  suite.test("On Deck drops books of hidden series", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      setAdultGenres(["Hentai"]);
+      const setup = onDeckSetup(
+        [bookFixture({ id: "a", seriesId: "bad" }), bookFixture({ id: "b", seriesId: "ok" })],
+        ["bad"],
+      );
+      try {
+        const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
+        expect(result.items.map((i) => "mangaId" in i && i.mangaId)).to.deep.equal(["ok"]);
+        const lookup = setup.requests.find((r) => r.url.includes("/series/list"))!;
+        expect(lookup.url).to.contain("unpaged=true");
+        expect(JSON.parse(lookup.body!).condition.anyOf).to.deep.equal([
+          { genre: { operator: "is", value: "hentai" } },
+        ]);
+      } finally {
+        setup.restore();
+      }
+    });
+  });
+
+  suite.test("On Deck drops one-shot books when one-shots are excluded", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(false);
+      const books = [bookFixture({ id: "a", oneshot: true }), bookFixture({ id: "b" })];
+      setIncludeOneshots(false);
+      let setup = onDeckSetup(books, []);
+      try {
+        const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
+        expect(result.items.length).to.equal(1);
+        expect(setup.requests.some((r) => r.url.includes("/series/list"))).to.equal(false);
+      } finally {
+        setup.restore();
+      }
+      setIncludeOneshots(true);
+      setup = onDeckSetup(books, []);
+      try {
+        const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
+        expect(result.items.length).to.equal(2);
+      } finally {
+        setup.restore();
+      }
+    });
+  });
+
+  suite.test("On Deck sends the library scope", async () => {
+    await withSearchState(async () => {
+      setSelectedLibraries(["lib1"]);
+      const { requests } = await captureRequests('{"content":[]}', () =>
+        getDiscoverSectionItems(sectionFor("onDeck"), { page: 2 }),
+      );
+      expect(requests[0]!.url).to.contain("library_id=lib1");
+      expect(requests[0]!.url).to.contain("page=2");
+    });
+  });
+
+  suite.test("Recently Added filters hidden genres and excludes one-shots", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      setAdultGenres(["Hentai"]);
+      setIncludeOneshots(false);
+      const body = JSON.stringify({
+        content: [
+          { id: "a", metadata: { title: "A", genres: ["Hentai"] } },
+          { id: "b", metadata: { title: "B", genres: ["Action"] } },
+        ],
+      });
+      const { result, requests } = await captureRequests(body, () =>
+        getDiscoverSectionItems(sectionFor("recentlyAdded"), undefined),
+      );
+      expect(requests[0]!.url).to.contain("/api/v1/series/new");
+      expect(requests[0]!.url).to.contain("oneshot=false");
+      expect(result.items.map((i) => "mangaId" in i && i.mangaId)).to.deep.equal(["b"]);
+    });
+  });
+
+  suite.test("Recently Updated uses the updated endpoint", async () => {
+    const { requests } = await captureRequests(seriesJson(1), () =>
+      getDiscoverSectionItems(sectionFor("recentlyUpdated"), undefined),
+    );
+    expect(requests[0]!.url).to.contain("/api/v1/series/updated");
+  });
+
+  suite.test(
+    "Genres drops adult genres, scopes to libraries and builds search queries",
+    async () => {
+      await withSearchState(async () => {
+        setHideAdultContent(true);
+        setAdultGenres(["hentai"]);
+        setSelectedLibraries(["lib1"]);
+        const { result, requests } = await captureRequests('["Action","Hentai","日本語"]', () =>
+          getDiscoverSectionItems(sectionFor("genres"), undefined),
+        );
+        expect(requests[0]!.url).to.contain("/api/v1/genres");
+        expect(requests[0]!.url).to.contain("library_id=lib1");
+        expect(result.items.length).to.equal(2);
+        expect(result.items[1]).to.deep.equal({
+          type: "genresCarouselItem",
+          name: "日本語",
+          searchQuery: {
+            title: "",
+            metadata: { filters: { genres: { [encodeTagId("genre", "日本語")]: "included" } } },
+          },
+        });
+      });
+    },
+  );
 
   await suite.run();
 }

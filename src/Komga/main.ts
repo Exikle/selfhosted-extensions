@@ -8,6 +8,10 @@ import {
   getChapters,
   processTitlesForUpdates,
 } from "./implementations/chapter-providing/main";
+import {
+  getDiscoverSectionItems,
+  getDiscoverSections,
+} from "./implementations/discover-section/main";
 import { getMangaDetails } from "./implementations/manga/main";
 import {
   getAdvancedSearchForm,
@@ -25,6 +29,8 @@ export class KomgaExtension implements Partial<ExtensionImpl<typeof KomgaConfig>
   getChapters = getChapters;
   getChapterDetails = getChapterDetails;
   processTitlesForUpdates = processTitlesForUpdates;
+  getDiscoverSections = getDiscoverSections;
+  getDiscoverSectionItems = getDiscoverSectionItems;
   getSearchResults = getSearchResults;
   getSortingOptions = getSortingOptions;
   getAdvancedSearchForm = getAdvancedSearchForm;

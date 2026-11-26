@@ -56,6 +56,7 @@ import { escapeLucene } from "../Komga/implementations/shared/lucene.js";
 import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
 import {
   getAdultGenres,
+  getApiKey,
   getBaseUrl,
   getCredentials,
   getHideAdultContent,
@@ -63,6 +64,7 @@ import {
   getSectionStyle,
   getSelectedLibraries,
   setAdultGenres,
+  setApiKey,
   setBaseUrl,
   setCredentials,
   setHideAdultContent,
@@ -72,6 +74,7 @@ import {
 } from "../Komga/implementations/shared/state.js";
 import { chapterLabel, parseChapterTitle } from "../Komga/implementations/shared/titles.js";
 import {
+  authHeaders,
   base64EncodeUtf8,
   basicAuthHeader,
   decodeTagId,
@@ -237,6 +240,75 @@ export async function runTests(logger: TestLogger) {
       headers: { authorization: "Bearer x" },
     });
     expect(out.headers).to.deep.equal({ authorization: "Bearer x" });
+  });
+
+  suite.test("authHeaders gives only X-API-Key with a key", async () => {
+    expect(authHeaders({ username: "u", password: "p" }, "k1")).to.deep.equal({
+      "X-API-Key": "k1",
+    });
+  });
+
+  suite.test("authHeaders gives only Authorization without a key", async () => {
+    expect(authHeaders({ username: "u", password: "p" }, "")).to.deep.equal({
+      Authorization: basicAuthHeader("u", "p"),
+    });
+  });
+
+  suite.test("setApiKey trims and getApiKey reads it back", async () => {
+    const saved = getApiKey();
+    try {
+      setApiKey("  abc  ");
+      expect(getApiKey()).to.equal("abc");
+    } finally {
+      setApiKey(saved);
+    }
+  });
+
+  suite.test("interceptor sends X-API-Key and no Authorization when a key is set", async () => {
+    const saved = getApiKey();
+    try {
+      setApiKey("secret");
+      const out = await interceptor.interceptRequest({ url: `${own}/api`, method: "GET" });
+      expect(out.headers).to.deep.equal({ "X-API-Key": "secret" });
+      setApiKey("");
+      const back = await interceptor.interceptRequest({ url: `${own}/api`, method: "GET" });
+      expect(back.headers?.["Authorization"]).to.match(/^Basic /);
+      expect(back.headers?.["X-API-Key"]).to.equal(undefined);
+    } finally {
+      setApiKey(saved);
+    }
+  });
+
+  suite.test("interceptor never overwrites an existing X-API-Key or Authorization", async () => {
+    const saved = getApiKey();
+    try {
+      for (const key of ["", "secret"]) {
+        setApiKey(key);
+        for (const headers of [
+          { "x-api-key": "typed" },
+          { "X-API-KEY": "typed" },
+          { AUTHORIZATION: "Basic x" },
+        ]) {
+          const out = await interceptor.interceptRequest({
+            url: `${own}/api`,
+            method: "GET",
+            headers,
+          });
+          expect(out.headers).to.deep.equal(headers);
+        }
+      }
+    } finally {
+      setApiKey(saved);
+    }
+  });
+
+  suite.test("classifyConnection names an invalid API key", async () => {
+    expect(
+      classifyConnection({ status: 401, reached: true, baseUrl: base, usedApiKey: true }).message,
+    ).to.equal("Invalid API key");
+    expect(classifyConnection({ status: 401, reached: true, baseUrl: base }).message).to.equal(
+      "Invalid credentials",
+    );
   });
 
   suite.test("buildUrl repeats array keys, skips undefined and empty, and encodes", async () => {
@@ -1721,6 +1793,54 @@ export async function runTests(logger: TestLogger) {
     expect(server.getSections().some((s) => s.footer === "Connected as a@b.c")).to.equal(true);
     expect(getBaseUrl()).to.equal(before.url);
     expect(getCredentials()).to.deep.equal(before.creds);
+  });
+
+  suite.test(
+    "server form has an API key row and disables login rows while it is typed",
+    async () => {
+      const server = new KomgaServerForm() as unknown as SettingsLike;
+      expect(rowOf(server, "api_key").isSecureEntry).to.equal(true);
+      expect(rowOf(server, "username").isDisabled).to.equal(false);
+      await (server.handleApiKey as (v: string) => Promise<void>)("typed-key");
+      expect(rowOf(server, "username").isDisabled).to.equal(true);
+      expect(rowOf(server, "password").isDisabled).to.equal(true);
+      expect(
+        server
+          .getSections()
+          .some(
+            (s) =>
+              s.footer ===
+              "API keys need Komga 1.20 or later. Create one in Komga under Account settings.",
+          ),
+      ).to.equal(true);
+    },
+  );
+
+  suite.test("server form Test Connection sends X-API-Key with the typed key", async () => {
+    const server = new KomgaServerForm() as unknown as SettingsLike;
+    const { requests } = await routeRequests(settingsServer, async () => {
+      await (server.handleBaseUrl as (v: string) => Promise<void>)("https://typed.example/");
+      await (server.handleApiKey as (v: string) => Promise<void>)("typed-key");
+      await (server.handleTestConnection as () => Promise<void>)();
+    });
+    const headers = (requests[0] as unknown as { headers: Record<string, string> }).headers;
+    expect(headers["X-API-Key"]).to.equal("typed-key");
+    expect(headers["Authorization"]).to.equal(undefined);
+  });
+
+  suite.test("server form submit saves the API key", async () => {
+    const before = { url: getBaseUrl(), creds: getCredentials(), key: getApiKey() };
+    try {
+      const server = new KomgaServerForm() as unknown as SettingsLike;
+      await (server.handleBaseUrl as (v: string) => Promise<void>)("https://typed.example/");
+      await (server.handleApiKey as (v: string) => Promise<void>)(" saved-key ");
+      await routeRequests(settingsServer, () => server.formDidSubmit!());
+      expect(getApiKey()).to.equal("saved-key");
+    } finally {
+      setBaseUrl(before.url);
+      setCredentials(before.creds.username, before.creds.password);
+      setApiKey(before.key);
+    }
   });
 
   suite.test("server form submit throws the check message and saves only on success", async () => {

@@ -41,6 +41,10 @@ export const setCredentials = (username: string, password: string): void => {
   Application.setSecureState(password, "serverPassword");
 };
 
+export const getApiKey = (): string => getSecureString("serverApiKey", "");
+export const setApiKey = (key: string): void =>
+  Application.setSecureState(key.trim(), "serverApiKey");
+
 export const getHideAdultContent = (): boolean => getKey("hideAdultContent", false);
 export const setHideAdultContent = (v: boolean): void => setKey("hideAdultContent", v);
 

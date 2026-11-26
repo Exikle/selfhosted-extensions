@@ -47,5 +47,13 @@ export function base64EncodeUtf8(text: string): string {
   return out;
 }
 
+export const authHeaders = (
+  creds: { username: string; password: string },
+  apiKey: string,
+): Record<string, string> =>
+  apiKey
+    ? { "X-API-Key": apiKey }
+    : { Authorization: basicAuthHeader(creds.username, creds.password) };
+
 export const basicAuthHeader = (username: string, password: string): string =>
   `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;

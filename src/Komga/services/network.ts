@@ -4,7 +4,7 @@
 import { URL } from "@paperback/types";
 
 import { getBaseUrl } from "../implementations/shared/state";
-import { basicAuthHeader, normaliseBaseUrl } from "../implementations/shared/utils";
+import { authHeaders, normaliseBaseUrl } from "../implementations/shared/utils";
 
 export class KomgaHttpError extends Error {
   constructor(
@@ -24,6 +24,7 @@ export type KomgaFetchOptions = {
   body?: unknown;
   baseUrl?: string;
   credentials?: { username: string; password: string };
+  apiKey?: string;
 };
 
 export const buildUrl = (
@@ -52,10 +53,11 @@ export async function komgaFetch<T>(path: string, opts: KomgaFetchOptions = {}):
   const headers: Record<string, string> = { Accept: "application/json" };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   // Typed-but-unsaved credentials (Test Connection) bypass the interceptor, which uses saved ones.
-  if (opts.credentials) {
-    headers["Authorization"] = basicAuthHeader(
-      opts.credentials.username,
-      opts.credentials.password,
+  // A typed key wins over typed credentials, so a request never carries both headers.
+  if (opts.credentials || opts.apiKey) {
+    Object.assign(
+      headers,
+      authHeaders(opts.credentials ?? { username: "", password: "" }, opts.apiKey ?? ""),
     );
   }
 

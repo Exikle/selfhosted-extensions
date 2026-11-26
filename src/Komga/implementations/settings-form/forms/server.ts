@@ -4,7 +4,14 @@
 import { ButtonRow, Form, InputRow, Section, type FormSectionElement } from "@paperback/types";
 
 import { checkConnection } from "../../shared/connection";
-import { getBaseUrl, getCredentials, setBaseUrl, setCredentials } from "../../shared/state";
+import {
+  getApiKey,
+  getBaseUrl,
+  getCredentials,
+  setApiKey,
+  setBaseUrl,
+  setCredentials,
+} from "../../shared/state";
 
 export class KomgaServerForm extends Form {
   override readonly requiresExplicitSubmission = true;
@@ -12,6 +19,7 @@ export class KomgaServerForm extends Form {
   private baseUrl = getBaseUrl();
   private username = getCredentials().username;
   private password = getCredentials().password;
+  private apiKey = getApiKey();
   private testMessage: string | undefined;
 
   override getSections(): FormSectionElement<unknown>[] {
@@ -30,14 +38,30 @@ export class KomgaServerForm extends Form {
           }),
           InputRow("username", {
             title: "Username",
+            isDisabled: this.apiKey.trim() !== "",
             value: this.username,
             onValueChange: Application.Selector(this as KomgaServerForm, "handleUsername"),
           }),
           InputRow("password", {
             title: "Password",
+            isDisabled: this.apiKey.trim() !== "",
             value: this.password,
             isSecureEntry: true,
             onValueChange: Application.Selector(this as KomgaServerForm, "handlePassword"),
+          }),
+        ],
+      ),
+      Section(
+        {
+          id: "api_key_section",
+          footer: "API keys need Komga 1.20 or later. Create one in Komga under Account settings.",
+        },
+        [
+          InputRow("api_key", {
+            title: "API Key",
+            value: this.apiKey,
+            isSecureEntry: true,
+            onValueChange: Application.Selector(this as KomgaServerForm, "handleApiKey"),
           }),
         ],
       ),
@@ -65,6 +89,12 @@ export class KomgaServerForm extends Form {
     this.testMessage = undefined;
   }
 
+  async handleApiKey(value: string): Promise<void> {
+    this.apiKey = value;
+    this.testMessage = undefined;
+    this.reloadForm();
+  }
+
   async handleTestConnection(): Promise<void> {
     this.testMessage = "Checking…";
     this.reloadForm();
@@ -77,14 +107,16 @@ export class KomgaServerForm extends Form {
     if (!result.ok) throw new Error(result.message);
     setBaseUrl(this.baseUrl);
     setCredentials(this.username, this.password);
+    setApiKey(this.apiKey);
     Application.invalidateDiscoverSections();
   }
 
   // Both are passed: the interceptor would otherwise authorise with the saved credentials.
   private check() {
-    return checkConnection(this.baseUrl, {
-      username: this.username,
-      password: this.password,
-    });
+    return checkConnection(
+      this.baseUrl,
+      { username: this.username, password: this.password },
+      this.apiKey.trim(),
+    );
   }
 }

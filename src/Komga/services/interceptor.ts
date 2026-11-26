@@ -3,8 +3,8 @@
 
 import { PaperbackInterceptor, type Request, type Response } from "@paperback/types";
 
-import { getBaseUrl, getCredentials } from "../implementations/shared/state";
-import { basicAuthHeader } from "../implementations/shared/utils";
+import { getApiKey, getBaseUrl, getCredentials } from "../implementations/shared/state";
+import { authHeaders } from "../implementations/shared/utils";
 
 // The trailing slash stops https://k.example matching https://k.example.evil.test.
 export const shouldAuthorise = (url: string, base: string): boolean =>
@@ -15,14 +15,17 @@ export class KomgaInterceptor extends PaperbackInterceptor {
     const base = getBaseUrl();
     const ownHost = shouldAuthorise(request.url, base);
     const headers = request.headers ?? {};
-    const hasAuth = Object.keys(headers).some((k) => k.toLowerCase() === "authorization");
+    // An existing header means the caller chose the login (Test Connection), so add nothing.
+    const hasAuth = Object.keys(headers).some((k) => {
+      const name = k.toLowerCase();
+      return name === "authorization" || name === "x-api-key";
+    });
     if (!ownHost || hasAuth) return request;
 
-    const { username, password } = getCredentials();
     // Images load through the app, not komgaFetch, so this covers thumbnails and pages too.
     return {
       ...request,
-      headers: { ...headers, Authorization: basicAuthHeader(username, password) },
+      headers: { ...headers, ...authHeaders(getCredentials(), getApiKey()) },
     };
   }
 

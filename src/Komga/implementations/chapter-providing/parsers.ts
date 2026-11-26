@@ -7,7 +7,7 @@ import type { BookDto } from "../shared/models";
 import { parseChapterTitle } from "../shared/titles";
 
 // A blank or non-numeric number would give 0 or NaN, so the sort key stands in.
-function parseChapterNumber(book: BookDto): number {
+export function parseChapterNumber(book: BookDto): number {
   const raw = book.metadata.number?.trim() ?? "";
   const parsed = raw === "" ? NaN : Number(raw);
   return Number.isFinite(parsed) ? parsed : book.metadata.numberSort;

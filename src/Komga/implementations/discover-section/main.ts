@@ -9,6 +9,7 @@ import {
 } from "@paperback/types";
 
 import { komgaFetch } from "../../services/network";
+import { resolveBookSeries } from "../shared/book-series";
 import { parseContentRating } from "../shared/content-rating";
 import {
   hiddenGenreConditions,
@@ -24,13 +25,19 @@ import {
   type SectionStyle,
 } from "../shared/state";
 import { capitalise, encodeTagId, errorMessage } from "../shared/utils";
-import { onDeckItem, seriesItem, sortNearlyFinished } from "./items";
+import { chapterUpdateItem, onDeckItem, seriesItem, sortNearlyFinished } from "./items";
 import { DISCOVER_SECTIONS } from "./sections";
 
 const STYLE_TYPES: Record<Exclude<SectionStyle, "hidden">, DiscoverSectionType> = {
   simple: DiscoverSectionType.simpleCarousel,
   large: DiscoverSectionType.prominentCarousel,
   hero: DiscoverSectionType.featured,
+};
+
+// Sections with one look, switched on or off by a toggle.
+const FIXED_TYPES: Record<string, DiscoverSectionType> = {
+  genres: DiscoverSectionType.genres,
+  latestChapters: DiscoverSectionType.chapterUpdates,
 };
 
 export async function getDiscoverSections(): Promise<DiscoverSection[]> {
@@ -42,7 +49,7 @@ export async function getDiscoverSections(): Promise<DiscoverSection[]> {
       id,
       title,
       subtitle,
-      type: fixedStyle ? DiscoverSectionType.genres : STYLE_TYPES[style],
+      type: fixedStyle ? (FIXED_TYPES[id] ?? DiscoverSectionType.genres) : STYLE_TYPES[style],
     });
   }
   return sections;
@@ -80,30 +87,30 @@ async function onDeckItems(
   const books = result.content ?? [];
   if (books.length === 0) return withNext([], 0, page);
 
-  // One lookup serves both the hidden-genre check and the content rating.
-  const seriesIds = [...new Set(books.map((b) => b.seriesId))];
-  const lookup = await komgaFetch<Page<SeriesDto>>("/api/v1/series/list", {
+  const { visible, seriesById } = await resolveBookSeries(books);
+  const items = visible.map((b) =>
+    onDeckItem(b, style, parseContentRating(seriesById.get(b.seriesId)?.metadata ?? {})),
+  );
+  return withNext(items, books.length, page);
+}
+
+async function latestChapterItems(page: number): Promise<PagedResults<DiscoverSectionItem>> {
+  const result = await komgaFetch<Page<BookDto>>("/api/v1/books/list", {
     method: "POST",
-    query: { unpaged: true },
+    query: { page, size: PAGE_SIZE, sort: "created,desc" },
     body: {
       condition: {
-        anyOf: seriesIds.map((id) => ({ seriesId: { operator: "is", value: id } })),
+        allOf: [
+          { deleted: { operator: "isFalse" } },
+          { mediaStatus: { operator: "is", value: "READY" } },
+          ...scopeConditions(),
+        ],
       },
     },
   });
-  const seriesById = new Map((lookup.content ?? []).map((s) => [s.id, s]));
-
-  const items = books
-    // A book whose series did not come back is dropped, so hidden content fails closed.
-    .filter((b) => {
-      const series = seriesById.get(b.seriesId);
-      return series !== undefined && !isHiddenSeries(series.metadata?.genres ?? []);
-    })
-    // Komga has no one-shot parameter on this endpoint.
-    .filter((b) => getIncludeOneshots() || !b.oneshot)
-    .map((b) =>
-      onDeckItem(b, style, parseContentRating(seriesById.get(b.seriesId)?.metadata ?? {})),
-    );
+  const books = result.content ?? [];
+  const { visible, seriesById } = await resolveBookSeries(books);
+  const items = visible.map((b) => chapterUpdateItem(b, seriesById.get(b.seriesId)!));
   return withNext(items, books.length, page);
 }
 
@@ -183,6 +190,8 @@ export async function getDiscoverSectionItems(
     switch (section.id) {
       case "onDeck":
         return await onDeckItems(style, page);
+      case "latestChapters":
+        return await latestChapterItems(page);
       case "keepReading":
         return await keepReadingItems(style, page);
       case "nearlyFinished":

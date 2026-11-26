@@ -18,6 +18,7 @@ import {
   toChapter,
 } from "../Komga/implementations/chapter-providing/parsers.js";
 import {
+  chapterUpdateItem,
   onDeckItem,
   seriesItem,
   sortNearlyFinished,
@@ -49,6 +50,7 @@ import { KomgaHomepageForm } from "../Komga/implementations/settings-form/forms/
 import { KomgaSettingsForm } from "../Komga/implementations/settings-form/forms/root.js";
 import { KomgaServerForm } from "../Komga/implementations/settings-form/forms/server.js";
 import { getSettingsForm } from "../Komga/implementations/settings-form/main.js";
+import { resolveBookSeries } from "../Komga/implementations/shared/book-series.js";
 import { checkConnection, classifyConnection } from "../Komga/implementations/shared/connection.js";
 import { parseContentRating } from "../Komga/implementations/shared/content-rating.js";
 import { isHiddenSeries } from "../Komga/implementations/shared/filters.js";
@@ -1370,9 +1372,10 @@ export async function runTests(logger: TestLogger) {
     expect(simple.type === "simpleCarouselItem" && simple.subtitle).to.equal(undefined);
   });
 
-  suite.test("getDiscoverSections lists the six sections and skips hidden ones", async () => {
+  suite.test("getDiscoverSections lists the seven sections and skips hidden ones", async () => {
     expect(DISCOVER_SECTIONS.map((s) => s.id)).to.deep.equal([
       "onDeck",
+      "latestChapters",
       "keepReading",
       "nearlyFinished",
       "recentlyAdded",
@@ -1601,6 +1604,178 @@ export async function runTests(logger: TestLogger) {
       expect(requests[0]!.url).to.contain("library_id=lib1");
       expect(requests[0]!.url).to.contain("page=2");
     });
+  });
+
+  const latestSetup = (
+    books: BookDto[],
+    series: { id: string; title?: string; genres?: string[]; ageRating?: number }[],
+  ) => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    const requests: { url: string; body?: string }[] = [];
+    const reply = (data: unknown) => [
+      { status: 200, headers: {} },
+      new TextEncoder().encode(JSON.stringify(data)).buffer,
+    ];
+    app.scheduleRequest = async (request: { url: string; body?: string }) => {
+      requests.push(request);
+      if (request.url.includes("/books/list")) return reply({ content: books });
+      return reply({
+        content: series.map((s) => ({
+          id: s.id,
+          name: s.id,
+          metadata: { title: s.title, genres: s.genres ?? [], ageRating: s.ageRating },
+        })),
+      });
+    };
+    return {
+      requests,
+      restore: () => {
+        app.scheduleRequest = original;
+      },
+    };
+  };
+
+  const latestBook = (over: Partial<BookDto> = {}): BookDto =>
+    bookFixture({
+      created: "2026-11-01T10:00:00Z",
+      metadata: { title: "Chapter 12: The Fall", number: "12", numberSort: 12 } as never,
+      ...over,
+    });
+
+  suite.test("Latest Chapters sends a created-desc books/list with scope conditions", async () => {
+    await withSearchState(async () => {
+      setSelectedLibraries(["lib1"]);
+      setIncludeOneshots(false);
+      const setup = latestSetup([latestBook()], [{ id: "s1", title: "Series" }]);
+      try {
+        await getDiscoverSectionItems(sectionFor("latestChapters"), undefined);
+        const first = setup.requests[0]!;
+        expect(first.url).to.contain("/api/v1/books/list");
+        expect(first.url).to.contain("sort=created%2Cdesc");
+        expect(first.url).to.contain("size=40");
+        expect(first.url).to.contain("page=0");
+        expect(JSON.parse(first.body!).condition.allOf).to.deep.equal([
+          { deleted: { operator: "isFalse" } },
+          { mediaStatus: { operator: "is", value: "READY" } },
+          { anyOf: [{ libraryId: { operator: "is", value: "lib1" } }] },
+          { oneShot: { operator: "isFalse" } },
+        ]);
+      } finally {
+        setup.restore();
+      }
+    });
+  });
+
+  suite.test("Latest Chapters omits scope conditions when none are set", async () => {
+    await withSearchState(async () => {
+      setSelectedLibraries([]);
+      setIncludeOneshots(true);
+      const setup = latestSetup([], []);
+      try {
+        await getDiscoverSectionItems(sectionFor("latestChapters"), undefined);
+        expect(JSON.parse(setup.requests[0]!.body!).condition.allOf).to.deep.equal([
+          { deleted: { operator: "isFalse" } },
+          { mediaStatus: { operator: "is", value: "READY" } },
+        ]);
+        expect(setup.requests.length).to.equal(1);
+      } finally {
+        setup.restore();
+      }
+    });
+  });
+
+  suite.test("Latest Chapters builds chapter update items in two requests", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(false);
+      const setup = latestSetup([latestBook()], [{ id: "s1", title: "Real Title", ageRating: 18 }]);
+      try {
+        const result = await getDiscoverSectionItems(sectionFor("latestChapters"), undefined);
+        expect(setup.requests.length).to.equal(2);
+        expect(result.items.length).to.equal(1);
+        const item = result.items[0]!;
+        expect(item.type).to.equal("chapterUpdatesCarouselItem");
+        if (item.type === "chapterUpdatesCarouselItem") {
+          expect(item.mangaId).to.equal("s1");
+          expect(item.chapterId).to.equal("b1");
+          expect(item.title).to.equal("Real Title");
+          expect(item.subtitle).to.equal("The Fall");
+          expect(item.imageUrl).to.contain("/api/v1/books/b1/thumbnail");
+          expect(item.publishDate?.toISOString()).to.equal("2026-11-01T10:00:00.000Z");
+          expect(item.contentRating).to.equal(ContentRating.ADULT);
+        }
+      } finally {
+        setup.restore();
+      }
+    });
+  });
+
+  suite.test("Latest Chapters labels an untitled book by its number", async () => {
+    const item = chapterUpdateItem(
+      latestBook({ metadata: { title: "Chapter 12", number: "12", numberSort: 12 } as never }),
+      seriesFixture(),
+    );
+    expect(item.subtitle).to.equal("Chapter 12");
+  });
+
+  suite.test("Latest Chapters drops books of hidden series", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      setAdultGenres(["Hentai"]);
+      const setup = latestSetup(
+        [latestBook({ id: "a", seriesId: "bad" }), latestBook({ id: "b", seriesId: "ok" })],
+        [
+          { id: "bad", genres: ["Hentai"] },
+          { id: "ok", genres: ["Action"] },
+        ],
+      );
+      try {
+        const result = await getDiscoverSectionItems(sectionFor("latestChapters"), undefined);
+        expect(result.items.map((i) => "chapterId" in i && i.chapterId)).to.deep.equal(["b"]);
+      } finally {
+        setup.restore();
+      }
+    });
+  });
+
+  suite.test("Latest Chapters pages on a full page", async () => {
+    await withSearchState(async () => {
+      const books = Array.from({ length: 40 }, (_, i) => latestBook({ id: `b${i}` }));
+      const setup = latestSetup(books, [{ id: "s1" }]);
+      try {
+        const result = await getDiscoverSectionItems(sectionFor("latestChapters"), { page: 1 });
+        expect(result.metadata).to.deep.equal({ page: 2 });
+        expect(setup.requests[0]!.url).to.contain("page=1");
+      } finally {
+        setup.restore();
+      }
+    });
+  });
+
+  suite.test("Latest Chapters section is a toggle of type chapterUpdates", async () => {
+    const saved = getSectionStyle("latestChapters");
+    try {
+      setSectionStyle("latestChapters", "simple");
+      const on = await getDiscoverSections();
+      expect(on.map((s) => s.id).slice(0, 2)).to.deep.equal(["onDeck", "latestChapters"]);
+      expect(on.find((s) => s.id === "latestChapters")?.type).to.equal(
+        DiscoverSectionType.chapterUpdates,
+      );
+      setSectionStyle("latestChapters", "hidden");
+      const off = await getDiscoverSections();
+      expect(off.map((s) => s.id)).to.not.include("latestChapters");
+      const form = new KomgaHomepageForm() as unknown as SettingsLike;
+      expect(rowOf(form, "section_latestChapters").type).to.equal("toggleRow");
+    } finally {
+      setSectionStyle("latestChapters", saved);
+    }
+  });
+
+  suite.test("resolveBookSeries sends no request for no books", async () => {
+    const { result, requests } = await captureRequests("{}", () => resolveBookSeries([]));
+    expect(requests.length).to.equal(0);
+    expect(result.visible).to.deep.equal([]);
+    expect(result.seriesById.size).to.equal(0);
   });
 
   suite.test("Recently Added filters hidden genres and excludes one-shots", async () => {

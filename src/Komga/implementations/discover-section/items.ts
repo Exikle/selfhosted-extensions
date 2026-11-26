@@ -1,12 +1,18 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Exikle */
 
-import type { ContentRating, DiscoverSectionItem } from "@paperback/types";
+import type {
+  ChapterUpdatesCarouselItem,
+  ContentRating,
+  DiscoverSectionItem,
+} from "@paperback/types";
 
 import { bookThumbnail, seriesThumbnail } from "../../services/network";
+import { parseChapterNumber } from "../chapter-providing/parsers";
 import { parseContentRating } from "../shared/content-rating";
 import { PAGE_SIZE, type BookDto, type SeriesDto } from "../shared/models";
 import type { SectionStyle } from "../shared/state";
+import { chapterLabel, parseChapterTitle } from "../shared/titles";
 import { capitalise } from "../shared/utils";
 
 // Komga cannot sort series by unread count, so the sort happens here.
@@ -71,4 +77,20 @@ export function onDeckItem(
   return style === "large"
     ? { type: "prominentCarouselItem", ...base, subtitle: b.seriesTitle }
     : { type: "simpleCarouselItem", ...base, subtitle: b.seriesTitle };
+}
+
+// A tap opens the series; the subtitle names the chapter the way the chapter list does.
+export function chapterUpdateItem(book: BookDto, series: SeriesDto): ChapterUpdatesCarouselItem {
+  const chapNum = parseChapterNumber(book);
+  const { title } = parseChapterTitle(book.metadata.title, chapNum);
+  return {
+    type: "chapterUpdatesCarouselItem",
+    mangaId: book.seriesId,
+    chapterId: book.id,
+    imageUrl: bookThumbnail(book.id),
+    title: series.metadata?.title ?? series.name,
+    subtitle: chapterLabel({ title, chapNum }),
+    publishDate: new Date(book.created),
+    contentRating: parseContentRating(series.metadata ?? {}),
+  };
 }

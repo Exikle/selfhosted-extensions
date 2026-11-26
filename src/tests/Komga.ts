@@ -1,6 +1,7 @@
-import { type TestLogger } from "@paperback/types";
+import { ContentRating, type TestLogger } from "@paperback/types";
 import { expect } from "chai";
 
+import { parseContentRating } from "../Komga/implementations/shared/content-rating.js";
 import { chapterLabel, parseChapterTitle } from "../Komga/implementations/shared/titles.js";
 import {
   decodeTagId,
@@ -26,6 +27,23 @@ export async function runTests(logger: TestLogger) {
 
   suite.test("decodeTagId returns undefined for a malformed id", async () => {
     expect(decodeTagId("genre:%E0%A4%A")).to.equal(undefined);
+  });
+
+  suite.test("parseContentRating reads the age rating", async () => {
+    expect(parseContentRating({ ageRating: 18 })).to.equal(ContentRating.ADULT);
+    expect(parseContentRating({ ageRating: 16 })).to.equal(ContentRating.MATURE);
+    expect(parseContentRating({ ageRating: 0 })).to.equal(ContentRating.EVERYONE);
+  });
+
+  suite.test("parseContentRating reads the genres", async () => {
+    expect(parseContentRating({ genres: ["Hentai"] })).to.equal(ContentRating.ADULT);
+    expect(parseContentRating({ genres: ["Ecchi"] })).to.equal(ContentRating.MATURE);
+    expect(parseContentRating({})).to.equal(ContentRating.EVERYONE);
+  });
+
+  suite.test("parseContentRating takes the higher of age rating and genres", async () => {
+    expect(parseContentRating({ ageRating: 0, genres: ["hentai"] })).to.equal(ContentRating.ADULT);
+    expect(parseContentRating({ ageRating: 16, genres: ["smut"] })).to.equal(ContentRating.ADULT);
   });
 
   const titleRows: [string, number, string | undefined, number | undefined][] = [

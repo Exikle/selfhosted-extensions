@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Exikle */
 
+import { ADULT_GENRES, MATURE_GENRES } from "./content-rating";
 import { normaliseBaseUrl } from "./utils";
 
 export type SectionStyle = "hidden" | "simple" | "large" | "hero";
@@ -44,15 +45,7 @@ export const getHideAdultContent = (): boolean => getKey("hideAdultContent", fal
 export const setHideAdultContent = (v: boolean): void => setKey("hideAdultContent", v);
 
 export const getAdultGenres = (): string[] =>
-  getStringArray("adultGenres", [
-    "adult",
-    "hentai",
-    "smut",
-    "erotica",
-    "pornographic",
-    "mature",
-    "ecchi",
-  ]).map((g) => g.toLowerCase());
+  getStringArray("adultGenres", [...ADULT_GENRES, ...MATURE_GENRES]).map((g) => g.toLowerCase());
 export const setAdultGenres = (v: string[]): void => setKey("adultGenres", v);
 
 export const getSectionStyle = (id: string): SectionStyle => {

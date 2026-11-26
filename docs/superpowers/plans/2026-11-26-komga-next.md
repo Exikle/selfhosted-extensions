@@ -38,6 +38,7 @@
 **Files:** `package.json`, `package-lock.json`, `src/Komga/implementations/discover-section/main.ts`, `src/Komga/implementations/manga/parsers.ts`, `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Produces: the code compiles against alpha.95. `toSourceManga(series)` sets `mangaInfo.isWebtoon`.
 
 - [ ] **Step 1:** Run `npm install --save-dev --save-exact=false @paperback/types@1.0.0-alpha.95 @paperback/toolchain@1.0.0-alpha.95`. Keep the `^` range style used in `package.json`. Run `npm run tsc` and fix every type error the upgrade causes, changing nothing else. If the toolchain has no alpha.95, keep the newest toolchain alpha that exists and say so.
@@ -52,6 +53,7 @@
 **Files:** `src/Komga/implementations/shared/lucene.ts` (new), `src/Komga/implementations/search-results/main.ts`, tests
 
 **Interfaces:**
+
 - Produces: `escapeLucene(text: string): string` and the `SORT_OPTIONS` entry `{ id: "bestMatch", label: "Best Match", sort: "relevance" }`, placed first.
 - Produces: `resolveSort(sortId: string | undefined, title: string, filters: KomgaSearchMetadata["filters"]): string`. This is the one place that picks the Komga sort, and Task 4 extends it.
 
@@ -70,6 +72,7 @@
 **Files:** `shared/state.ts`, `services/interceptor.ts`, `services/network.ts`, `shared/connection.ts`, `settings-form/forms/server.ts`, tests
 
 **Interfaces:**
+
 - Produces:
   - `getApiKey(): string`, which returns `""` when unset.
   - `setApiKey(key: string): void`, stored in secure state under `serverApiKey`. It trims the value.
@@ -94,6 +97,7 @@
 **Files:** `search-results/forms.ts`, `search-results/main.ts`, `shared/utils.ts` (TagKind adds `"publisher"`), `manga/parsers.ts`, tests
 
 **Interfaces:**
+
 - `KomgaSearchMetadata` gains `author?: string`. The form gains the groups `readStatus`, `seriesStatus`, `publishers`, `languages` and `ageRatings` (TriStateSelectRow; `readStatus` is include-only) and an `InputRow` with id `author`.
 - `CONDITION_FIELDS` gains:
   - `readStatus` → `readStatus`
@@ -130,6 +134,7 @@
 **Files:** `discover-section/sections.ts`, `discover-section/main.ts`, `discover-section/items.ts`, `settings-form/forms/homepage.ts`, tests
 
 **Interfaces:**
+
 - Produces `resolveBookSeries(books: BookDto[]): Promise<{ visible: BookDto[]; seriesById: Map<string, SeriesDto> }>`. It extracts On Deck's single series lookup: one unpaged `series/list` `anyOf seriesId` request, which drops books of hidden or missing series and one-shots when they are excluded. An empty input sends no request. Task 8 reuses it.
 - Produces `chapterUpdateItem(book: BookDto, series: SeriesDto): ChapterUpdatesCarouselItem`:
   - `mangaId` = seriesId, `chapterId` = book id, `title` = series title;
@@ -153,6 +158,7 @@
 **Files:** `chapter-providing/main.ts`, `chapter-providing/parsers.ts`, tests
 
 **Interfaces:**
+
 - Produces `groupNewBooks(books: BookDto[], cutoff: Date): { bySeries: Map<string, BookDto[]>; reachedCutoff: boolean }` (pure). It walks books sorted `created` desc and stops at the first book whose `created` is at or before the cutoff.
 - `processTitlesForUpdates` adds a book walk after the series walk:
   - `POST /books/list?sort=created,desc&size=40&page=N`, with `allOf` of the updated series ids (`anyOf seriesId is`), `deleted isFalse` and `mediaStatus is READY`;
@@ -176,6 +182,7 @@
 **Files:** `implementations/managed-collection/main.ts` (new), `main.ts`, `pbconfig.ts` (add `MANAGED_COLLECTION_PROVIDING`, keeping capabilities in alphabetical order), `shared/models.ts` (`CollectionDto` gains `seriesIds: string[]`, `filtered: boolean`; `UserDto` gains `roles?: string[]`), tests
 
 **Interfaces:**
+
 - Produces `getManagedCollections(): Promise<ManagedCollection[]>`:
   - `GET /api/v1/collections?unpaged=true`, with `id` and `title`;
   - it never throws, and returns `[]` on error.
@@ -210,6 +217,7 @@
 **Files:** `discover-section/sections.ts`, `discover-section/main.ts`, `shared/state.ts`, `settings-form/forms/homepage.ts`, `shared/models.ts` (`ReadListDto = {id, name}`), tests
 
 **Interfaces:**
+
 - **State:** `getReadListEnabled(id: string): boolean` (default `false`) and `setReadListEnabled(id: string, on: boolean)`, under the key `readList.<id>`.
 - **Collections section:** `{id: "collections", title: "Collections", fixedStyle: true}`, type `genres`.
   - Items are `genresCarouselItem`: `name` is the collection name, and `searchQuery` is `{title: "", metadata: {filters: {collections: {[encodeTagId("collection", id)]: "included"}}}}`.
@@ -233,6 +241,7 @@
 **Files:** `manga/main.ts`, `manga/parsers.ts`, `search-results/forms.ts` (confirm that the `author` input row from Task 4 fills from a staff tap), tests
 
 **Interfaces:**
+
 - Produces `staffSection(series: SeriesDto): MangaInfoStaffSection | undefined`:
   - id `author`, title "Creators", one item per unique author name;
   - `staff.title` = the name, `staff.subtitle` = the roles, capitalised and joined with `, `;

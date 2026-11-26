@@ -39,6 +39,7 @@ Komga 4.0.1 matches PR #6 feature for feature, with fixes. Exikle wants to go fu
 Ship one release, `4.1.0`, built in three ordered stages. Each stage leaves the extension working, and A goes first because C needs its SDK upgrade.
 
 Approaches considered:
+
 - **Three separate releases (4.0.2, 4.1.0, 4.2.0).** More version bumps for the user to install, and B and C share files (search form, settings, details), so they would conflict.
 - **One release in stages (chosen).** One version for the user; the stages keep the build order safe.
 
@@ -64,7 +65,7 @@ Approaches considered:
    - A footer explains: "API keys need Komga 1.20 or later. Create one in Komga under Account settings."
    - A 401 with a key reads "Invalid API key".
 2. **Latest Chapters home section.**
-   - New section id `latestChapters`, titled "Latest Chapters", with type `chapterUpdates`. It shows newly *added* books.
+   - New section id `latestChapters`, titled "Latest Chapters", with type `chapterUpdates`. It shows newly _added_ books.
    - Source: `POST /api/v1/books/list?sort=created,desc&size=40&page=N`, not `/books/latest`. `/books/latest` takes no `library_id` or one-shot filter, and also returns edited books.
    - The `allOf` body holds:
      - `deleted isFalse`;
@@ -79,17 +80,16 @@ Approaches considered:
      - `contentRating` from the series
    - Hidden genres and content ratings come from the same single series lookup On Deck uses.
    - Homepage Settings shows it as an on/off toggle, like Genres. It is on by default and placed after On Deck.
-3. **More search filters.** These are added to the advanced search form; each one maps to a `/series/list` condition. Operators are lowercase (`is`, `isNot`). Enum *values* are UPPERCASE: `readStatus` is `UNREAD`, `IN_PROGRESS` or `READ`; `seriesStatus` is `ONGOING`, `ENDED`, `HIATUS` or `ABANDONED`. A wrong case fails the whole request.
+3. **More search filters.** These are added to the advanced search form; each one maps to a `/series/list` condition. Operators are lowercase (`is`, `isNot`). Enum _values_ are UPPERCASE: `readStatus` is `UNREAD`, `IN_PROGRESS` or `READ`; `seriesStatus` is `ONGOING`, `ENDED`, `HIATUS` or `ABANDONED`. A wrong case fails the whole request.
 
-   | Filter | Kind | Condition |
-   | --- | --- | --- |
-   | Read status | Unread, In progress, Read; include only | `readStatus is X`. Several values are combined with `anyOf` |
-   | Series status | Ongoing, Ended, Hiatus, Abandoned; include/exclude | `seriesStatus` |
-   | Publisher | List from `GET /api/v1/publishers`; include/exclude | `publisher` |
-   | Language | List from `GET /api/v1/languages`; include/exclude | `language` |
-   | Age rating | List from `GET /api/v1/age-ratings`; include/exclude | `ageRating`. The value is an Int. The list's `"None"` maps to `isNull` when included and `isNotNull` when excluded; numbers map to `is` or `isNot` with the Int |
-   | Author | Text input: a new `InputRow` with id `author`, value stored in `KomgaSearchMetadata.author` | `author is {name: <text>}`, any role. The value is an object, not a string |
-
+   | Filter        | Kind                                                                                        | Condition                                                                                                                                                       |
+   | ------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | Read status   | Unread, In progress, Read; include only                                                     | `readStatus is X`. Several values are combined with `anyOf`                                                                                                     |
+   | Series status | Ongoing, Ended, Hiatus, Abandoned; include/exclude                                          | `seriesStatus`                                                                                                                                                  |
+   | Publisher     | List from `GET /api/v1/publishers`; include/exclude                                         | `publisher`                                                                                                                                                     |
+   | Language      | List from `GET /api/v1/languages`; include/exclude                                          | `language`                                                                                                                                                      |
+   | Age rating    | List from `GET /api/v1/age-ratings`; include/exclude                                        | `ageRating`. The value is an Int. The list's `"None"` maps to `isNull` when included and `isNotNull` when excluded; numbers map to `is` or `isNot` with the Int |
+   | Author        | Text input: a new `InputRow` with id `author`, value stored in `KomgaSearchMetadata.author` | `author is {name: <text>}`, any role. The value is an object, not a string                                                                                      |
    - The v1 referential endpoints (`publishers`, `languages`, `age-ratings`) are deprecated since Komga 1.26 but still work. Use them; the v2 replacements are paged.
 
    - Included values within one group are combined with `anyOf` for publisher, language, age rating and series status, the way libraries already work. Exclusions stay `isNot` in `allOf`.
@@ -97,13 +97,14 @@ Approaches considered:
      - **Release Date** (`booksMetadata.releaseDate,desc`).
      - **Random** (`random`). Random returns one page only, with no next page, because every page reshuffles and would repeat or skip series.
    - Each lookup falls back to an empty list; the form never throws.
+
 4. **Publisher on the details page.**
-   - A "Publisher" tag group, with group id `publisher`, holds one tag with the id `encodeTagId("publisher", name)`.
-   - The search form's publisher group uses the same id, `publisher`, and `CONDITION_FIELDS` maps `publisher` to the `publisher` condition.
+   - A "Publisher" tag group, with group id `publishers`, holds one tag with the id `encodeTagId("publisher", name)`.
+   - The search form's publisher group uses the same id, `publishers`, and `CONDITION_FIELDS` maps `publishers` to the `publisher` condition.
    - Search already keys conditions by form group id. With matching ids, a tap on the tag searches that publisher, as genre and tag taps do today.
    - Authors are covered by C3.
 5. **Faster update check.**
-   - Komga's book search has no date condition (checked in `SearchCondition.kt`; book *sort* keys do include `created`).
+   - Komga's book search has no date condition (checked in `SearchCondition.kt`; book _sort_ keys do include `created`).
    - So after `processTitlesForUpdates` finds the updated queued series, it pages `POST /books/list?sort=created,desc&size=40`. The `allOf` body holds:
      - `anyOf` of `seriesId is` for each updated series;
      - `deleted isFalse`;

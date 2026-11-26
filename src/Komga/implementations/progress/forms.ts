@@ -18,6 +18,7 @@ import { errorMessage } from "../shared/utils";
 
 const UNREAD_ID = "unread";
 const UNREAD_LABEL = "No chapters read";
+const ALL_READ_LABEL = "All chapters read";
 
 export class KomgaProgressForm extends Form {
   override readonly requiresExplicitSubmission = true;
@@ -26,6 +27,8 @@ export class KomgaProgressForm extends Form {
   private current: Chapter | undefined;
   private selectedId: string;
   private actionError: string | undefined;
+  // Set when Mark Read succeeds on a series with no chapters to point at.
+  private markedRead = false;
 
   constructor(
     private readonly sourceManga: SourceManga,
@@ -52,7 +55,11 @@ export class KomgaProgressForm extends Form {
         [
           LabelRow("current_progress", {
             title: "Current progress",
-            value: this.current ? chapterLabel(this.current) : UNREAD_LABEL,
+            value: this.current
+              ? chapterLabel(this.current)
+              : this.markedRead
+                ? ALL_READ_LABEL
+                : UNREAD_LABEL,
           }),
           SelectRow("last_read_chapter", {
             title: "Last Read Chapter",
@@ -105,6 +112,7 @@ export class KomgaProgressForm extends Form {
         method: "POST",
       });
       this.current = this.chapters[this.chapters.length - 1];
+      this.markedRead = true;
       this.selectedId = this.current?.chapterId ?? UNREAD_ID;
       this.actionError = undefined;
     } catch (err) {
@@ -131,6 +139,7 @@ export class KomgaProgressForm extends Form {
       method: "DELETE",
     });
     this.current = undefined;
+    this.markedRead = false;
     this.selectedId = UNREAD_ID;
   }
 }

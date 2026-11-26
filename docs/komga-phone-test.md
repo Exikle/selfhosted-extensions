@@ -6,14 +6,14 @@ You need: an iPhone with Paperback 0.9 and your Komga server.
 
 ## Setup
 
-1. On the phone, remove the old Komga extension first.
-2. In Paperback, add `https://exikle.github.io/selfhosted-extensions/0.9/stable` as a repository. Paperback refuses plain `http://` repositories.
-3. Install Komga (version 4.0.0) from that repository.
-4. Open the Komga settings. Check whether the server URL and login came across.
+Paperback upgrades an installed Komga in place (same source id), so settings and library stay.
+
+1. In Paperback, add `https://exikle.github.io/selfhosted-extensions/0.9/stable` as a repository. Paperback refuses plain `http://` repositories.
+2. Install Komga (version 4.0.0) from that repository.
+3. Open the Komga settings. Check whether the server URL and login came across.
 
 ## Install
 
-- [ ] The old Komga is gone before I install.
 - [ ] Server URL and login came across. If not, I re-entered them once.
 - [ ] Hide Adult Content, Include One-Shots, the selected libraries and the section styles all carried over, not only the URL and login.
 
@@ -57,7 +57,7 @@ Try Regular, Large and Hero on each section.
 - [ ] Recently Added Series: all three styles load.
 - [ ] Recently Updated Series: all three styles load.
 - [ ] Large cards say "<n> of <n> read".
-- [ ] Hero cards show their small icons next to the book and read counts. (The "book.pages" icon on On Deck may be blank on iOS older than 17. That is fine.)
+- [ ] Hero cards show their small icons next to the book and read counts.
 - [ ] Genres: tap a genre. Search opens with that genre.
 
 ## Home sections: order and scope

@@ -4,7 +4,8 @@
 // A placeholder needs a separator after "Vol", so "Volna" is not "Vol" plus "NA".
 const VOLUME_TOKEN =
   /^vol(?:ume)?(?:\.?\s*(\d+(?:\.\d+)*)|(?:\.\s*|\s+)(?:TBD|TBA|N\/A|NA|\?{1,3}))(?![A-Za-z])\s*/i;
-const CHAPTER_TOKEN = /^ch(?:apter)?\.?\s*-?\d+(?:\.\d+)*\s*/i;
+// Digits and letters after the number mean it is part of a word, so "Chapter 12abc" is left alone.
+const CHAPTER_TOKEN = /^ch(?:apter)?\.?\s*-?\d+(?:\.\d+)*(?![A-Za-z\d]|\.\d)\s*/i;
 const SEPARATOR_TOKEN = /^[-–—:|]\s*/;
 
 export function parseChapterTitle(

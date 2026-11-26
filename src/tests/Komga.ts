@@ -133,6 +133,12 @@ export async function runTests(logger: TestLogger) {
     ["VOLCANO", 1, "VOLCANO", undefined],
     ["Volna", 1, "Volna", undefined],
     ["Vol.NA Ch.1 Name", 1, "Name", undefined],
+    ["Chapter 12abc", 12, "Chapter 12abc", undefined],
+    ["Ch.5Extra", 5, "Ch.5Extra", undefined],
+    ["Ch.3 \u2013 Name", 3, "Name", undefined],
+    ["Ch.3 \u2014 Name", 3, "Name", undefined],
+    ["Ch.3: Name", 3, "Name", undefined],
+    ["Ch.3 | Name", 3, "Name", undefined],
   ];
   for (const [raw, num, title, volume] of titleRows) {
     suite.test(`parseChapterTitle: ${raw}`, async () => {
@@ -1089,6 +1095,24 @@ export async function runTests(logger: TestLogger) {
     }
   });
 
+  suite.test("hero book count is singular for one book", async () => {
+    const text = (n: number) => {
+      const hero = seriesItem(seriesFixture({ booksCount: n }), "hero");
+      return hero.type === "featuredCarouselItem" ? hero.infoItems?.[0]?.text : undefined;
+    };
+    expect(text(1)).to.equal("1 book");
+    expect(text(2)).to.equal("2 books");
+  });
+
+  suite.test("On Deck hero items carry the info items and use the book symbol", async () => {
+    const hero = onDeckItem(bookFixture(), "hero");
+    expect(hero.type).to.equal("featuredCarouselItem");
+    if (hero.type === "featuredCarouselItem") {
+      expect(hero.supertitle).to.equal("Series");
+      expect(hero.infoItems).to.deep.equal([{ symbol: "book", text: "30 pages" }]);
+    }
+  });
+
   const sectionFor = (id: string): DiscoverSection => ({
     id,
     title: id,
@@ -1148,18 +1172,27 @@ export async function runTests(logger: TestLogger) {
     expect(nearly.requests[0]!.url).to.contain("unpaged=true");
   });
 
-  const onDeckSetup = (books: BookDto[], hiddenSeriesIds: string[]) => {
+  const onDeckSetup = (
+    books: BookDto[],
+    series: { id: string; genres?: string[]; ageRating?: number }[],
+    seriesStatus = 200,
+  ) => {
     const app = Application as unknown as { scheduleRequest: unknown };
     const original = app.scheduleRequest;
     const requests: { url: string; body?: string }[] = [];
-    const reply = (data: unknown) => [
-      { status: 200, headers: {} },
+    const reply = (status: number, data: unknown) => [
+      { status, headers: {} },
       new TextEncoder().encode(JSON.stringify(data)).buffer,
     ];
     app.scheduleRequest = async (request: { url: string; body?: string }) => {
       requests.push(request);
-      if (request.url.includes("/books/ondeck")) return reply({ content: books });
-      return reply({ content: hiddenSeriesIds.map((id) => ({ id })) });
+      if (request.url.includes("/books/ondeck")) return reply(200, { content: books });
+      return reply(seriesStatus, {
+        content: series.map((s) => ({
+          id: s.id,
+          metadata: { genres: s.genres ?? [], ageRating: s.ageRating },
+        })),
+      });
     };
     return {
       requests,
@@ -1175,16 +1208,60 @@ export async function runTests(logger: TestLogger) {
       setAdultGenres(["Hentai"]);
       const setup = onDeckSetup(
         [bookFixture({ id: "a", seriesId: "bad" }), bookFixture({ id: "b", seriesId: "ok" })],
-        ["bad"],
+        [
+          { id: "bad", genres: ["Hentai"] },
+          { id: "ok", genres: ["Action"] },
+        ],
       );
       try {
         const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
         expect(result.items.map((i) => "mangaId" in i && i.mangaId)).to.deep.equal(["ok"]);
-        const lookup = setup.requests.find((r) => r.url.includes("/series/list"))!;
-        expect(lookup.url).to.contain("unpaged=true");
-        expect(JSON.parse(lookup.body!).condition.anyOf).to.deep.equal([
-          { genre: { operator: "is", value: "hentai" } },
-        ]);
+      } finally {
+        setup.restore();
+      }
+    });
+  });
+
+  suite.test(
+    "On Deck sets content rating from the series and uses one series request",
+    async () => {
+      await withSearchState(async () => {
+        setHideAdultContent(false);
+        const setup = onDeckSetup(
+          [bookFixture({ id: "a", seriesId: "adult" }), bookFixture({ id: "b", seriesId: "kids" })],
+          [
+            { id: "adult", genres: ["Hentai"] },
+            { id: "kids", genres: ["Action"] },
+          ],
+        );
+        try {
+          const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
+          expect(
+            result.items.map((i) => ("contentRating" in i ? i.contentRating : undefined)),
+          ).to.deep.equal([ContentRating.ADULT, ContentRating.EVERYONE]);
+          expect(setup.requests.length).to.equal(2);
+          const lookup = setup.requests[1]!;
+          expect(lookup.url).to.contain("/api/v1/series/list");
+          expect(lookup.url).to.contain("unpaged=true");
+          expect(JSON.parse(lookup.body!).condition.anyOf).to.deep.equal([
+            { seriesId: { operator: "is", value: "adult" } },
+            { seriesId: { operator: "is", value: "kids" } },
+          ]);
+        } finally {
+          setup.restore();
+        }
+      });
+    },
+  );
+
+  suite.test("On Deck returns empty items when the series lookup fails", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      setAdultGenres(["Hentai"]);
+      const setup = onDeckSetup([bookFixture({ id: "a", seriesId: "x" })], [], 500);
+      try {
+        const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
+        expect(result).to.deep.equal({ items: [] });
       } finally {
         setup.restore();
       }
@@ -1196,16 +1273,15 @@ export async function runTests(logger: TestLogger) {
       setHideAdultContent(false);
       const books = [bookFixture({ id: "a", oneshot: true }), bookFixture({ id: "b" })];
       setIncludeOneshots(false);
-      let setup = onDeckSetup(books, []);
+      let setup = onDeckSetup(books, [{ id: "s1" }]);
       try {
         const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
         expect(result.items.length).to.equal(1);
-        expect(setup.requests.some((r) => r.url.includes("/series/list"))).to.equal(false);
       } finally {
         setup.restore();
       }
       setIncludeOneshots(true);
-      setup = onDeckSetup(books, []);
+      setup = onDeckSetup(books, [{ id: "s1" }]);
       try {
         const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
         expect(result.items.length).to.equal(2);
@@ -1241,6 +1317,47 @@ export async function runTests(logger: TestLogger) {
         getDiscoverSectionItems(sectionFor("recentlyAdded"), undefined),
       );
       expect(requests[0]!.url).to.contain("/api/v1/series/new");
+      expect(requests[0]!.url).to.contain("oneshot=false");
+      expect(result.items.map((i) => "mangaId" in i && i.mangaId)).to.deep.equal(["b"]);
+    });
+  });
+
+  suite.test("Nearly Finished body carries read status, hidden genres and scope", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      setAdultGenres(["Hentai"]);
+      setSelectedLibraries(["lib1"]);
+      setIncludeOneshots(false);
+      const { requests } = await captureRequests(seriesJson(0), () =>
+        getDiscoverSectionItems(sectionFor("nearlyFinished"), undefined),
+      );
+      expect(requests[0]!.url).to.contain("/api/v1/series/list");
+      expect(requests[0]!.url).to.contain("unpaged=true");
+      expect(JSON.parse(requests[0]!.body!).condition.allOf).to.deep.equal([
+        { deleted: { operator: "isFalse" } },
+        { readStatus: { operator: "is", value: "IN_PROGRESS" } },
+        { genre: { operator: "isNot", value: "hentai" } },
+        { anyOf: [{ libraryId: { operator: "is", value: "lib1" } }] },
+        { oneShot: { operator: "isFalse" } },
+      ]);
+    });
+  });
+
+  suite.test("Recently Updated filters hidden genres and excludes one-shots", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      setAdultGenres(["Hentai"]);
+      setIncludeOneshots(false);
+      const body = JSON.stringify({
+        content: [
+          { id: "a", metadata: { title: "A", genres: ["Hentai"] } },
+          { id: "b", metadata: { title: "B", genres: ["Action"] } },
+        ],
+      });
+      const { result, requests } = await captureRequests(body, () =>
+        getDiscoverSectionItems(sectionFor("recentlyUpdated"), undefined),
+      );
+      expect(requests[0]!.url).to.contain("/api/v1/series/updated");
       expect(requests[0]!.url).to.contain("oneshot=false");
       expect(result.items.map((i) => "mangaId" in i && i.mangaId)).to.deep.equal(["b"]);
     });
@@ -1380,6 +1497,19 @@ export async function runTests(logger: TestLogger) {
     await withResponse(500, "", () => form.handleMarkRead());
     const footers = JSON.stringify(form.getSections());
     expect(footers).to.contain("Could not mark read: Komga returned 500");
+  });
+
+  suite.test("progress form Mark Read with no chapters says all chapters read", async () => {
+    const form = (await routeRequests(
+      () => JSON.stringify({ content: [], last: true, number: 0 }),
+      () => getMangaProgressManagementForm(sourceManga),
+    ).then((r) => r.result)) as unknown as {
+      handleMarkRead(): Promise<void>;
+      getSections(): unknown[];
+    };
+    await withResponse(200, "", () => form.handleMarkRead());
+    const text = JSON.stringify(form.getSections());
+    expect(text).to.contain('"title":"Current progress","value":"All chapters read"');
   });
 
   suite.test("progress form Mark Unread shows a thrown string, not undefined", async () => {

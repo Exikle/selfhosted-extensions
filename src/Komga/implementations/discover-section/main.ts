@@ -9,6 +9,7 @@ import {
 } from "@paperback/types";
 
 import { komgaFetch } from "../../services/network";
+import { parseContentRating } from "../shared/content-rating";
 import {
   hiddenGenreConditions,
   isHiddenSeries,
@@ -17,8 +18,6 @@ import {
 } from "../shared/filters";
 import { PAGE_SIZE, type BookDto, type Page, type SeriesDto } from "../shared/models";
 import {
-  getAdultGenres,
-  getHideAdultContent,
   getIncludeOneshots,
   getSectionStyle,
   getSelectedLibraries,
@@ -71,19 +70,6 @@ const inProgressBody = (): object => ({
   },
 });
 
-async function hiddenSeriesIds(): Promise<Set<string>> {
-  const genres = getHideAdultContent() ? getAdultGenres() : [];
-  if (genres.length === 0) return new Set();
-  const result = await komgaFetch<Page<SeriesDto>>("/api/v1/series/list", {
-    method: "POST",
-    query: { unpaged: true },
-    body: {
-      condition: { anyOf: genres.map((genre) => ({ genre: { operator: "is", value: genre } })) },
-    },
-  });
-  return new Set((result.content ?? []).map((s) => s.id));
-}
-
 async function onDeckItems(
   style: SectionStyle,
   page: number,
@@ -92,12 +78,32 @@ async function onDeckItems(
     query: { page, size: PAGE_SIZE, ...scopeQuery() },
   });
   const books = result.content ?? [];
-  const hidden = await hiddenSeriesIds();
+  if (books.length === 0) return withNext([], 0, page);
+
+  // One lookup serves both the hidden-genre check and the content rating.
+  const seriesIds = [...new Set(books.map((b) => b.seriesId))];
+  const lookup = await komgaFetch<Page<SeriesDto>>("/api/v1/series/list", {
+    method: "POST",
+    query: { unpaged: true },
+    body: {
+      condition: {
+        anyOf: seriesIds.map((id) => ({ seriesId: { operator: "is", value: id } })),
+      },
+    },
+  });
+  const seriesById = new Map((lookup.content ?? []).map((s) => [s.id, s]));
+
   const items = books
-    .filter((b) => !hidden.has(b.seriesId))
+    // A book whose series did not come back is dropped, so hidden content fails closed.
+    .filter((b) => {
+      const series = seriesById.get(b.seriesId);
+      return series !== undefined && !isHiddenSeries(series.metadata?.genres ?? []);
+    })
     // Komga has no one-shot parameter on this endpoint.
     .filter((b) => getIncludeOneshots() || !b.oneshot)
-    .map((b) => onDeckItem(b, style));
+    .map((b) =>
+      onDeckItem(b, style, parseContentRating(seriesById.get(b.seriesId)?.metadata ?? {})),
+    );
   return withNext(items, books.length, page);
 }
 

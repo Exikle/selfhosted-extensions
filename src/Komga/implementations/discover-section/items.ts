@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Exikle */
 
-import type { DiscoverSectionItem } from "@paperback/types";
+import type { ContentRating, DiscoverSectionItem } from "@paperback/types";
 
 import { bookThumbnail, seriesThumbnail } from "../../services/network";
 import { parseContentRating } from "../shared/content-rating";
@@ -31,7 +31,10 @@ export function seriesItem(s: SeriesDto, style: SectionStyle): DiscoverSectionIt
       supertitle: [status, s.metadata?.publisher].filter(Boolean).join(" · ") || undefined,
       summary: s.metadata?.summary || undefined,
       infoItems: [
-        { symbol: "books.vertical", text: `${s.booksCount} books` },
+        {
+          symbol: "books.vertical",
+          text: `${s.booksCount} ${s.booksCount === 1 ? "book" : "books"}`,
+        },
         { symbol: "checkmark.circle", text: `${s.booksReadCount} read` },
       ],
     };
@@ -46,18 +49,23 @@ export function seriesItem(s: SeriesDto, style: SectionStyle): DiscoverSectionIt
 }
 
 // A tap opens the series; the tile shows the book so you see what is next.
-export function onDeckItem(b: BookDto, style: SectionStyle): DiscoverSectionItem {
+export function onDeckItem(
+  b: BookDto,
+  style: SectionStyle,
+  contentRating?: ContentRating,
+): DiscoverSectionItem {
   const base = {
     mangaId: b.seriesId,
     imageUrl: bookThumbnail(b.id),
     title: b.metadata?.title || b.name,
+    contentRating,
   };
   if (style === "hero") {
     return {
       type: "featuredCarouselItem",
       ...base,
       supertitle: b.seriesTitle,
-      infoItems: [{ symbol: "book.pages", text: `${b.media?.pagesCount ?? 0} pages` }],
+      infoItems: [{ symbol: "book", text: `${b.media?.pagesCount ?? 0} pages` }],
     };
   }
   return style === "large"

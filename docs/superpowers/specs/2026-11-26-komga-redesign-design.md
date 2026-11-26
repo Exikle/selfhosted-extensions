@@ -78,13 +78,13 @@ differs on purpose (see "Old bugs not to carry over").
 
 ## Decisions Exikle made
 
-| Decision | Choice |
-| --- | --- |
-| Source id | Keep `Komga`. Library entries carry over. The old repo's Komga is removed from the phone before this one is installed. |
-| Version | `4.0.0` |
-| Settings | Carry over by reusing the 3.9.4 setting key names |
-| Publishing | Local only for now: `npm run dev` on the LAN |
-| Repo shape | Inkdex format; room for other extensions later |
+| Decision   | Choice                                                                                                                 |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Source id  | Keep `Komga`. Library entries carry over. The old repo's Komga is removed from the phone before this one is installed. |
+| Version    | `4.0.0`                                                                                                                |
+| Settings   | Carry over by reusing the 3.9.4 setting key names                                                                      |
+| Publishing | Local only for now: `npm run dev` on the LAN                                                                           |
+| Repo shape | Inkdex format; room for other extensions later                                                                         |
 
 ## Calls made for Exikle (theirs to overrule)
 
@@ -146,39 +146,39 @@ Below is what the extension must do. File references point at the old code in
 
 Auth is HTTP Basic from secure state on every call.
 
-| Use | Call |
-| --- | --- |
-| Connection check | `GET /api/v2/users/me` |
-| Genres | `GET /api/v1/genres` |
-| Tags | `GET /api/v1/tags/series` |
-| Collections | `GET /api/v1/collections` (fetch every page) |
-| Libraries | `GET /api/v1/libraries` |
-| Series details | `GET /api/v1/series/{id}` |
-| Search, Keep Reading, Nearly Finished, hidden set | `POST /api/v1/series/list` |
-| On Deck | `GET /api/v1/books/ondeck` |
-| Recently Added | `GET /api/v1/series/new` |
-| Recently Updated, update check | `GET /api/v1/series/updated` |
-| Chapters | `POST /api/v1/books/list` |
-| Pages | `GET /api/v1/books/{id}/pages` |
-| Progress read / set | `GET` / `PUT /api/v2/series/{id}/read-progress/tachiyomi` |
-| Mark series unread / read | `DELETE` / `POST /api/v1/series/{id}/read-progress` |
-| Mark book read | `PATCH /api/v1/books/{id}/read-progress` |
-| Images | `/api/v1/series/{id}/thumbnail`, `/api/v1/books/{id}/thumbnail`, `/api/v1/books/{id}/pages/{n}` |
+| Use                                               | Call                                                                                            |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Connection check                                  | `GET /api/v2/users/me`                                                                          |
+| Genres                                            | `GET /api/v1/genres`                                                                            |
+| Tags                                              | `GET /api/v1/tags/series`                                                                       |
+| Collections                                       | `GET /api/v1/collections` (fetch every page)                                                    |
+| Libraries                                         | `GET /api/v1/libraries`                                                                         |
+| Series details                                    | `GET /api/v1/series/{id}`                                                                       |
+| Search, Keep Reading, Nearly Finished, hidden set | `POST /api/v1/series/list`                                                                      |
+| On Deck                                           | `GET /api/v1/books/ondeck`                                                                      |
+| Recently Added                                    | `GET /api/v1/series/new`                                                                        |
+| Recently Updated, update check                    | `GET /api/v1/series/updated`                                                                    |
+| Chapters                                          | `POST /api/v1/books/list`                                                                       |
+| Pages                                             | `GET /api/v1/books/{id}/pages`                                                                  |
+| Progress read / set                               | `GET` / `PUT /api/v2/series/{id}/read-progress/tachiyomi`                                       |
+| Mark series unread / read                         | `DELETE` / `POST /api/v1/series/{id}/read-progress`                                             |
+| Mark book read                                    | `PATCH /api/v1/books/{id}/read-progress`                                                        |
+| Images                                            | `/api/v1/series/{id}/thumbnail`, `/api/v1/books/{id}/thumbnail`, `/api/v1/books/{id}/pages/{n}` |
 
 Search filters go in the request body as JSON. They are never url-encoded.
 
 ### Settings keys (carry over from 3.9.4)
 
-| Key | Store | Type | Default |
-| --- | --- | --- | --- |
-| `serverURL` | state | string | `https://demo.komga.org` |
-| `serverUsername` | secure | string | the Komga demo username |
-| `serverPassword` | secure | string | the Komga demo password |
-| `hideAdultContent` | state | boolean | `false` |
-| `adultGenres` | state | string[] | adult, hentai, smut, erotica, pornographic, mature, ecchi |
-| `sectionStyle.<sectionId>` | state | `hidden` / `simple` / `large` / `hero` | `simple` |
-| `selectedLibraries` | state | string[] | `[]` (all libraries) |
-| `includeOneshots` | state | boolean | `true` |
+| Key                        | Store  | Type                                   | Default                                                   |
+| -------------------------- | ------ | -------------------------------------- | --------------------------------------------------------- |
+| `serverURL`                | state  | string                                 | `https://demo.komga.org`                                  |
+| `serverUsername`           | secure | string                                 | the Komga demo username                                   |
+| `serverPassword`           | secure | string                                 | the Komga demo password                                   |
+| `hideAdultContent`         | state  | boolean                                | `false`                                                   |
+| `adultGenres`              | state  | string[]                               | adult, hentai, smut, erotica, pornographic, mature, ecchi |
+| `sectionStyle.<sectionId>` | state  | `hidden` / `simple` / `large` / `hero` | `simple`                                                  |
+| `selectedLibraries`        | state  | string[]                               | `[]` (all libraries)                                      |
+| `includeOneshots`          | state  | boolean                                | `true`                                                    |
 
 Base URL is trimmed and loses trailing slashes, both when saved and when
 read, so a value saved by 3.9.4 works without a migration step.
@@ -208,19 +208,19 @@ read, so a value saved by 3.9.4 works without a migration step.
 
 ### Manga details
 
-| Paperback field | From Komga |
-| --- | --- |
-| `primaryTitle` | `metadata.title` |
-| `secondaryTitles` | `metadata.alternateTitles[].title` |
-| `thumbnailUrl` | series thumbnail URL |
-| `contentRating` | see Content rating |
-| `status` | `metadata.status`, lower-cased |
-| `author` | `booksMetadata.authors` with role `writer`, joined `, ` |
-| `artist` | role `penciller`, joined `, ` |
-| `synopsis` | `metadata.summary`, else `booksMetadata.summary` |
-| `tagGroups` | Genres, Tags |
-| `shareUrl` | first link labelled AniList, then MangaDex, MangaUpdates, MyAnimeList (label lower-cased, spaces removed), else the first link |
-| `additionalInfo` | `language`, `readingDirection`, `publisher`, book counts (books, total, read, unread, in progress) |
+| Paperback field   | From Komga                                                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `primaryTitle`    | `metadata.title`                                                                                                               |
+| `secondaryTitles` | `metadata.alternateTitles[].title`                                                                                             |
+| `thumbnailUrl`    | series thumbnail URL                                                                                                           |
+| `contentRating`   | see Content rating                                                                                                             |
+| `status`          | `metadata.status`, lower-cased                                                                                                 |
+| `author`          | `booksMetadata.authors` with role `writer`, joined `, `                                                                        |
+| `artist`          | role `penciller`, joined `, `                                                                                                  |
+| `synopsis`        | `metadata.summary`, else `booksMetadata.summary`                                                                               |
+| `tagGroups`       | Genres, Tags                                                                                                                   |
+| `shareUrl`        | first link labelled AniList, then MangaDex, MangaUpdates, MyAnimeList (label lower-cased, spaces removed), else the first link |
+| `additionalInfo`  | `language`, `readingDirection`, `publisher`, book counts (books, total, read, unread, in progress)                             |
 
 A 404 gives "Series not found"; other errors give their own message.
 
@@ -254,19 +254,19 @@ chapter number. Placeholders are a fixed list only: `TBD`, `TBA`, `?`, `??`,
 
 Expected results:
 
-| Title (number) | Title out | Volume out |
-| --- | --- | --- |
-| `Chapter 254` (254) | none | none |
-| `Ch.245` (245) | none | none |
-| `Ch.040.5` (40.5) | none | none |
-| `Vol.13 Ch.074.5` (74.5) | none | 13 |
-| `Vol.TBD Ch.234` (234) | none | none |
-| `Vol.02 Ch.016 - The Aria` (16) | The Aria | 2 |
-| `Chapter 10 - Chapter 10` (10) | none | none |
-| `Chapter 5 Part 2` (5) | Part 2 | none |
-| `Vol.1 THE END` (1) | THE END | 1 |
-| `Vol. THE Beginning` (1) | Vol. THE Beginning | none |
-| `VOLCANO` (1) | VOLCANO | none |
+| Title (number)                  | Title out          | Volume out |
+| ------------------------------- | ------------------ | ---------- |
+| `Chapter 254` (254)             | none               | none       |
+| `Ch.245` (245)                  | none               | none       |
+| `Ch.040.5` (40.5)               | none               | none       |
+| `Vol.13 Ch.074.5` (74.5)        | none               | 13         |
+| `Vol.TBD Ch.234` (234)          | none               | none       |
+| `Vol.02 Ch.016 - The Aria` (16) | The Aria           | 2          |
+| `Chapter 10 - Chapter 10` (10)  | none               | none       |
+| `Chapter 5 Part 2` (5)          | Part 2             | none       |
+| `Vol.1 THE END` (1)             | THE END            | 1          |
+| `Vol. THE Beginning` (1)        | Vol. THE Beginning | none       |
+| `VOLCANO` (1)                   | VOLCANO            | none       |
 
 ### Update check
 
@@ -289,18 +289,19 @@ limitation: metadata-only edits count as updates.
   always added.
 - Sort options (each checked asc and desc on a live server):
 
-  | Label | Komga sort |
-  | --- | --- |
-  | Title (A–Z) | `metadata.titleSort,asc` (default) |
-  | Title (Z–A) | `metadata.titleSort,desc` |
-  | Recently Added | `created,desc` |
-  | Recently Updated | `lastModified,desc` |
-  | Recently Read | `readDate,desc` |
-  | Most Chapters | `booksCount,desc` |
+  | Label            | Komga sort                         |
+  | ---------------- | ---------------------------------- |
+  | Title (A–Z)      | `metadata.titleSort,asc` (default) |
+  | Title (Z–A)      | `metadata.titleSort,desc`          |
+  | Recently Added   | `created,desc`                     |
+  | Recently Updated | `lastModified,desc`                |
+  | Recently Read    | `readDate,desc`                    |
+  | Most Chapters    | `booksCount,desc`                  |
 
   The PR notes say Komga ignores `titleSort`, `releaseDate` and `folderName`
   and still returns 200. `metadata.titleSort` is a different field from
   `titleSort`. Re-check both title sorts during the phone test.
+
 - Page size 40. Next page only when the page came back full.
 - Never throws. On error, return an empty result, because Paperback calls it
   during global searches too.
@@ -308,14 +309,14 @@ limitation: metadata-only edits count as updates.
 
 ### Discover sections
 
-| id | Title | Query |
-| --- | --- | --- |
-| `onDeck` | On Deck | `GET /books/ondeck`, library scope; one-shots and hidden genres filtered in the extension |
-| `keepReading` | Keep Reading | series list, `readStatus IN_PROGRESS`, sort `readProgress.readDate,desc` |
-| `nearlyFinished` | Nearly Finished | same condition, unpaged; sorted by fewest unread books in the extension (Komga cannot sort by `booksUnreadCount`); first 40 |
-| `recentlyAdded` | Recently Added Series | `GET /series/new` |
-| `recentlyUpdated` | Recently Updated Series | `GET /series/updated` |
-| `genres` | Genres | `GET /genres`; adult genres dropped when hiding; a tap searches that genre |
+| id                | Title                   | Query                                                                                                                       |
+| ----------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `onDeck`          | On Deck                 | `GET /books/ondeck`, library scope; one-shots and hidden genres filtered in the extension                                   |
+| `keepReading`     | Keep Reading            | series list, `readStatus IN_PROGRESS`, sort `readProgress.readDate,desc`                                                    |
+| `nearlyFinished`  | Nearly Finished         | same condition, unpaged; sorted by fewest unread books in the extension (Komga cannot sort by `booksUnreadCount`); first 40 |
+| `recentlyAdded`   | Recently Added Series   | `GET /series/new`                                                                                                           |
+| `recentlyUpdated` | Recently Updated Series | `GET /series/updated`                                                                                                       |
+| `genres`          | Genres                  | `GET /genres`; adult genres dropped when hiding; a tap searches that genre                                                  |
 
 - Library scope, one-shots and Hide Adult Content apply to every section.
 - Styles: Regular = simple carousel, Large = prominent carousel (subtitle
@@ -346,22 +347,22 @@ check, progress push and every interceptor must not throw. Interceptors treat
 
 ## Old bugs not to carry over
 
-| Old bug | Fix in the redesign |
-| --- | --- |
-| Search throws when the server is down (`komga.ts:470`) | Return empty results |
-| Search form gets an un-awaited Promise (`komga.ts:139`) | Await the filters |
-| Update check marks everything skip at the 50-page cap (`komga.ts:595`) | Leave unseen series at default priority |
-| On Deck ignores one-shots; Komga has no `oneshot` param there | Filter in the extension |
-| On Deck Hero style builds the wrong item type | Build featured items |
-| Genres section ignores library scope | Limit genres to the selected libraries (`/api/v1/genres?library_id=` if Komga supports it, else leave and note it) |
-| Title parser eats uppercase words after `Vol` | Fixed placeholder list |
-| `btoa` throws on non-Latin-1 genre and tag names | Ids that handle any Unicode (`encodeURIComponent`) |
-| Untitled chapter shows "No chapters read" in the progress label | "Chapter <n>" |
-| Content rating ignores genres when `ageRating` is set | Take the higher rating |
-| Empty language gives an empty `langCode` | `UNKNOWN` |
-| Chapter condition sends three keys in one object | `allOf` |
-| Collections filter only reads the first page | Fetch every page |
-| Search always makes one extra empty request | Stop when a page comes back short |
+| Old bug                                                                | Fix in the redesign                                                                                                |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Search throws when the server is down (`komga.ts:470`)                 | Return empty results                                                                                               |
+| Search form gets an un-awaited Promise (`komga.ts:139`)                | Await the filters                                                                                                  |
+| Update check marks everything skip at the 50-page cap (`komga.ts:595`) | Leave unseen series at default priority                                                                            |
+| On Deck ignores one-shots; Komga has no `oneshot` param there          | Filter in the extension                                                                                            |
+| On Deck Hero style builds the wrong item type                          | Build featured items                                                                                               |
+| Genres section ignores library scope                                   | Limit genres to the selected libraries (`/api/v1/genres?library_id=` if Komga supports it, else leave and note it) |
+| Title parser eats uppercase words after `Vol`                          | Fixed placeholder list                                                                                             |
+| `btoa` throws on non-Latin-1 genre and tag names                       | Ids that handle any Unicode (`encodeURIComponent`)                                                                 |
+| Untitled chapter shows "No chapters read" in the progress label        | "Chapter <n>"                                                                                                      |
+| Content rating ignores genres when `ageRating` is set                  | Take the higher rating                                                                                             |
+| Empty language gives an empty `langCode`                               | `UNKNOWN`                                                                                                          |
+| Chapter condition sends three keys in one object                       | `allOf`                                                                                                            |
+| Collections filter only reads the first page                           | Fetch every page                                                                                                   |
+| Search always makes one extra empty request                            | Stop when a page comes back short                                                                                  |
 
 ## Testing
 

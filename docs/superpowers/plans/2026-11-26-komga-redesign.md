@@ -42,11 +42,13 @@
 ### Task 1: Scaffold `src/Komga` and clean up the template
 
 **Files:**
+
 - Create: `src/Komga/pbconfig.ts`, `src/Komga/main.ts`, `src/Komga/static/icon.png` (copy from `/tmp/komga-old/src/Komga/static/icon.png`), `src/tests/Komga.ts`
 - Delete: `src/ContentTemplate/` (all), `src/tests/ContentTemplate.ts`, `.github/workflows/bundle-deploy.yaml`, `.github/workflows/registry-management.yaml`, `.github/workflows/delete-branch-ext.yaml`, `.github/dependabot.yml`
 - Modify: `README.md` (one paragraph: what this repo is, how to run `npm run dev` and add the LAN URL in Paperback), `package.json` (`"name": "Self-hosted Extensions (0.9)"` stays; add `chai` and `@types/chai` to devDependencies only if `npm run test` fails to resolve `chai`)
 
 **Interfaces:**
+
 - Produces: `export class KomgaExtension implements ExtensionImpl<typeof KomgaConfig>` and `export const Komga = new KomgaExtension()` in `src/Komga/main.ts`. Later tasks add methods by assignment (`getMangaDetails = getMangaDetails;`), as Inkdex MangaDex does.
 - Produces: `src/tests/Komga.ts` exporting `async function runTests(logger: TestLogger)`. It builds `new TestSuite("Komga tests", logger)`, calls `registerDefaultTests(suite, Komga, sourceInfo)`, then the unit tests added by later tasks, then `await suite.run()`.
 
@@ -59,10 +61,12 @@
 ### Task 2: Settings state and id helpers
 
 **Files:**
+
 - Create: `src/Komga/implementations/shared/state.ts`, `src/Komga/implementations/shared/utils.ts`
 - Test: `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Produces, in `state.ts`:
   - `getBaseUrl(): string`, `setBaseUrl(url: string): void`. Both pass the value through `normaliseBaseUrl`. Default `https://demo.komga.org`.
   - `getCredentials(): {username: string; password: string}` and `setCredentials(username: string, password: string): void`. Secure state. Defaults are the Komga demo login from `/tmp/komga-old/src/Komga/utils/config.ts:10-11`.
@@ -89,10 +93,12 @@
 ### Task 3: Chapter title parser
 
 **Files:**
+
 - Create: `src/Komga/implementations/shared/titles.ts`
 - Test: `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Produces: `parseChapterTitle(raw: string, number: number): {title?: string; volume?: number}` and `chapterLabel(chapter: {title?: string; chapNum: number}): string`, which returns `title` if it is not empty, else `` `Chapter ${chapNum}` ``.
 
 - [ ] **Step 1: Write failing tests.** One assertion per row of the spec's "Title parser" table, with `title` and `volume` checked separately (`undefined` where the table says "none"). Add `chapterLabel({title: "", chapNum: 12})` gives `"Chapter 12"`.
@@ -104,10 +110,12 @@
 ### Task 4: Content rating
 
 **Files:**
+
 - Create: `src/Komga/implementations/shared/content-rating.ts`
 - Test: `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Produces: `ADULT_GENRES = ["adult","hentai","smut","erotica","pornographic"]`, `MATURE_GENRES = ["mature","ecchi"]`, and `parseContentRating(meta: {ageRating?: number | null; genres?: string[]}): ContentRating`.
 
 - [ ] **Step 1: Write failing tests:**
@@ -123,11 +131,13 @@
 ### Task 5: Komga client, interceptor and connection check
 
 **Files:**
+
 - Create: `src/Komga/services/network.ts`, `src/Komga/services/interceptor.ts`, `src/Komga/implementations/shared/models.ts`, `src/Komga/implementations/shared/connection.ts`
 - Modify: `src/Komga/main.ts` (register the interceptor in `initialise`)
 - Test: `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Produces, in `models.ts`: the Komga response types the later tasks read, with only the fields used. `SeriesDto`, `SeriesMetadata`, `BookDto`, `PageDto`, `LibraryDto`, `CollectionDto`, `Page<T> = {content: T[]; last: boolean; number: number}`, `TachiyomiProgressV2 = {lastReadContinuousNumberSort: number}`, `UserDto = {email?: string}`. Field names come from Komga's API (check `/tmp/komga-old/src/Komga/sdk/types.gen.ts`).
 - Produces, in `network.ts`:
   - `class KomgaHttpError extends Error { status: number }`.
@@ -153,11 +163,13 @@
 ### Task 6: Manga details
 
 **Files:**
+
 - Create: `src/Komga/implementations/manga/main.ts`, `src/Komga/implementations/manga/parsers.ts`
 - Modify: `src/Komga/main.ts`
 - Test: `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Consumes: `komgaFetch`, `seriesThumbnail`, `parseContentRating`, `encodeTagId`, `capitalise`.
 - Produces: `getMangaDetails(mangaId: string): Promise<SourceManga>`, plus `pickShareUrl(links: {label: string; url: string}[]): string | undefined` and `toSourceManga(series: SeriesDto): SourceManga` in `parsers.ts`.
 
@@ -172,11 +184,13 @@
 ### Task 7: Chapters, pages and the update check
 
 **Files:**
+
 - Create: `src/Komga/implementations/chapter-providing/main.ts`, `src/Komga/implementations/chapter-providing/parsers.ts`
 - Modify: `src/Komga/main.ts`
 - Test: `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Consumes: `komgaFetch`, `pageUrl`, `parseChapterTitle`.
 - Produces: `getChapters(sourceManga: SourceManga): Promise<Chapter[]>`, `getChapterDetails(chapter: Chapter): Promise<ChapterDetails>`, `processTitlesForUpdates(updateManager: UpdateManager, lastUpdateDate?: Date): Promise<void>`. Also, in `parsers.ts`:
   - `toChapter(book: BookDto, seriesLanguage: string | undefined, sourceManga: SourceManga): Chapter`.
@@ -194,11 +208,13 @@
 ### Task 8: Search
 
 **Files:**
+
 - Create: `src/Komga/implementations/search-results/main.ts`, `src/Komga/implementations/search-results/forms.ts`, `src/Komga/implementations/shared/filters.ts`
 - Modify: `src/Komga/main.ts`
 - Test: `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Consumes: `komgaFetch`, `decodeTagId`, `encodeTagId`, state getters, `parseContentRating`, `seriesThumbnail`.
 - Produces, in `filters.ts` (Task 9 uses these too):
   - `hiddenGenreConditions(): object[]`: `genre isNot <g>` for each adult genre when hiding; otherwise `[]`.
@@ -225,11 +241,13 @@
 ### Task 9: Discover sections
 
 **Files:**
+
 - Create: `src/Komga/implementations/discover-section/main.ts`, `src/Komga/implementations/discover-section/sections.ts`, `src/Komga/implementations/discover-section/items.ts`
 - Modify: `src/Komga/main.ts`
 - Test: `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Consumes: `filters.ts`, state getters, `komgaFetch`, the thumbnail helpers, `parseContentRating`, `encodeTagId`.
 - Produces:
   - `DISCOVER_SECTIONS: {id: string; title: string; subtitle: string; fixedStyle?: boolean}[]`, with the six ids and titles from the spec, in order.
@@ -250,11 +268,13 @@
 ### Task 10: Progress
 
 **Files:**
+
 - Create: `src/Komga/implementations/progress/main.ts`, `src/Komga/implementations/progress/forms.ts`
 - Modify: `src/Komga/main.ts`
 - Test: `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Consumes: `getChapters`, `komgaFetch`, `chapterLabel`.
 - Produces:
   - `chapterForProgress(chapters: Chapter[], value: number): Chapter | undefined` (pure): the highest `sortingIndex ?? chapNum` that is at or below `value`, or `undefined` when `value <= 0`.
@@ -274,11 +294,13 @@
 ### Task 11: Settings screens
 
 **Files:**
+
 - Create: `src/Komga/implementations/settings-form/main.ts`, `src/Komga/implementations/settings-form/forms/root.ts`, `forms/server.ts`, `forms/homepage.ts`, `forms/content.ts`
 - Modify: `src/Komga/main.ts`
 - Test: `src/tests/Komga.ts`
 
 **Interfaces:**
+
 - Consumes: state getters and setters, `checkConnection`, `DISCOVER_SECTIONS`, `komgaFetch` (genres, libraries).
 - Produces: `getSettingsForm(): Promise<Form>`, plus four `Form` subclasses: `KomgaSettingsForm`, `KomgaServerForm`, `KomgaHomepageForm` and `KomgaContentForm`.
 
@@ -291,6 +313,7 @@
 ### Task 12: Phone test checklist and the merge
 
 **Files:**
+
 - Create: `docs/komga-phone-test.md`
 
 - [ ] **Step 1:** Write the checklist. Start with: remove the old Komga, run `npm run dev`, add `http://<LAN IP>:<port>` in Paperback, install, and note whether the settings came across. Then one line per spec item to check on the phone: each settings screen and status message, each home section in every style, search with each filter and both directions of each sort (the two title sorts must differ), details fields, chapter titles (`Ch.245`, `Vol.13 Ch.074.5`), page loading, progress pull, form and push, Hide Adult Content, library scope, one-shots, and the update check.

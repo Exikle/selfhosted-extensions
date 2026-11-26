@@ -14,13 +14,13 @@ user before writing code.
 
 ## Where things are
 
-| What | Where |
-| --- | --- |
-| This repo | `git.dcunha.io/Exikle/selfhosted-extensions` (public), local `~/selfhosted-extensions`, branch `0.9/stable` |
-| Starting scaffold | Fresh copy of `inkdex/template-extensions` (branch `0.9/stable`), with no upstream remote |
-| Old Komga code (reference only) | `git.dcunha.io/Exikle/extensions-default`, branch `0.9`, head `6d14ed8`, version 3.9.4 |
-| The PR in scope | <https://github.com/Paperback-iOS/extensions-default/pull/6>, open, head = the fork's `0.9` branch |
-| How Inkdex lays out a real repo | `inkdex/general-extensions`, branch `0.9/stable` |
+| What                            | Where                                                                                                       |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| This repo                       | `git.dcunha.io/Exikle/selfhosted-extensions` (public), local `~/selfhosted-extensions`, branch `0.9/stable` |
+| Starting scaffold               | Fresh copy of `inkdex/template-extensions` (branch `0.9/stable`), with no upstream remote                   |
+| Old Komga code (reference only) | `git.dcunha.io/Exikle/extensions-default`, branch `0.9`, head `6d14ed8`, version 3.9.4                      |
+| The PR in scope                 | <https://github.com/Paperback-iOS/extensions-default/pull/6>, open, head = the fork's `0.9` branch          |
+| How Inkdex lays out a real repo | `inkdex/general-extensions`, branch `0.9/stable`                                                            |
 
 ## Scope
 

@@ -1,8 +1,11 @@
 import { ContentRating, type TestLogger } from "@paperback/types";
 import { expect } from "chai";
 
+import { getMangaDetails } from "../Komga/implementations/manga/main.js";
+import { pickShareUrl, toSourceManga } from "../Komga/implementations/manga/parsers.js";
 import { checkConnection, classifyConnection } from "../Komga/implementations/shared/connection.js";
 import { parseContentRating } from "../Komga/implementations/shared/content-rating.js";
+import type { SeriesDto } from "../Komga/implementations/shared/models.js";
 import { chapterLabel, parseChapterTitle } from "../Komga/implementations/shared/titles.js";
 import {
   base64EncodeUtf8,
@@ -229,6 +232,115 @@ export async function runTests(logger: TestLogger) {
       message = (err as Error).message;
     }
     expect(message).to.equal("No Komga server set");
+  });
+
+  suite.test("pickShareUrl prefers AniList, then falls back to the first link", async () => {
+    const links = [
+      { label: "Web", url: "w" },
+      { label: "My Anime List", url: "m" },
+      { label: "AniList", url: "a" },
+    ];
+    expect(pickShareUrl(links)).to.equal("a");
+    expect(pickShareUrl([{ label: "Web", url: "w" }])).to.equal("w");
+    expect(pickShareUrl([])).to.equal(undefined);
+  });
+
+  const series: SeriesDto = {
+    id: "s1",
+    libraryId: "l1",
+    name: "Series",
+    oneshot: false,
+    booksCount: 10,
+    booksReadCount: 4,
+    booksUnreadCount: 5,
+    booksInProgressCount: 1,
+    metadata: {
+      title: "Primary",
+      summary: "",
+      status: "ONGOING",
+      genres: ["science fiction", "Ecchi"],
+      tags: ["time travel"],
+      language: "ja",
+      readingDirection: "RIGHT_TO_LEFT",
+      publisher: "Pub",
+      ageRating: 0,
+      totalBookCount: 12,
+      alternateTitles: [
+        { label: "en", title: "Alt One" },
+        { label: "ja", title: "Alt Two" },
+      ],
+      links: [{ label: "MangaDex", url: "https://md" }],
+    },
+    booksMetadata: {
+      summary: "Books summary",
+      authors: [
+        { name: "W1", role: "writer" },
+        { name: "P1", role: "penciller" },
+        { name: "W2", role: "writer" },
+        { name: "C1", role: "colorist" },
+      ],
+    },
+  };
+
+  suite.test("toSourceManga maps every details field", async () => {
+    const { mangaId, mangaInfo } = toSourceManga(series);
+    expect(mangaId).to.equal("s1");
+    expect(mangaInfo.primaryTitle).to.equal("Primary");
+    expect(mangaInfo.secondaryTitles).to.deep.equal(["Alt One", "Alt Two"]);
+    expect(mangaInfo.thumbnailUrl).to.match(/\/api\/v1\/series\/s1\/thumbnail$/);
+    expect(mangaInfo.contentRating).to.equal(ContentRating.MATURE);
+    expect(mangaInfo.status).to.equal("ongoing");
+    expect(mangaInfo.author).to.equal("W1, W2");
+    expect(mangaInfo.artist).to.equal("P1");
+    expect(mangaInfo.synopsis).to.equal("Books summary");
+    expect(mangaInfo.shareUrl).to.equal("https://md");
+    expect(mangaInfo.tagGroups).to.deep.equal([
+      {
+        id: "genres",
+        title: "Genres",
+        tags: [
+          { id: encodeTagId("genre", "science fiction"), title: "Science fiction" },
+          { id: encodeTagId("genre", "Ecchi"), title: "Ecchi" },
+        ],
+      },
+      {
+        id: "tags",
+        title: "Tags",
+        tags: [{ id: encodeTagId("tag", "time travel"), title: "Time travel" }],
+      },
+    ]);
+    expect(mangaInfo.additionalInfo).to.deep.equal({
+      language: "ja",
+      readingDirection: "RIGHT_TO_LEFT",
+      publisher: "Pub",
+      books: "10",
+      totalBooks: "12",
+      booksRead: "4",
+      booksUnread: "5",
+      booksInProgress: "1",
+    });
+  });
+
+  suite.test("toSourceManga prefers the series summary and omits an unknown total", async () => {
+    const { mangaInfo } = toSourceManga({
+      ...series,
+      metadata: { ...series.metadata, summary: "Series summary", totalBookCount: undefined },
+    });
+    expect(mangaInfo.synopsis).to.equal("Series summary");
+    expect(mangaInfo.additionalInfo).to.not.have.property("totalBooks");
+  });
+
+  suite.test("getMangaDetails maps 404 to Series not found and keeps other messages", async () => {
+    const message = async (status: number): Promise<string> => {
+      try {
+        await withResponse(status, "", () => getMangaDetails("s1"));
+      } catch (err) {
+        return (err as Error).message;
+      }
+      return "";
+    };
+    expect(await message(404)).to.equal("Series not found");
+    expect(await message(500)).to.equal("Komga returned 500");
   });
 
   await suite.run();

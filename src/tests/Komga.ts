@@ -2451,7 +2451,7 @@ export async function runTests(logger: TestLogger) {
 
   type CollectionState = { seriesIds: string[]; filtered?: boolean };
   const collectionServer = async (
-    admin: boolean,
+    admin: boolean | "error",
     collections: Record<string, CollectionState>,
     patchStatus: Record<string, number> = {},
     run: () => Promise<unknown>,
@@ -2465,7 +2465,8 @@ export async function runTests(logger: TestLogger) {
       let body: unknown = {};
       const match = /\/api\/v1\/collections\/([^/?]+)$/.exec(request.url);
       if (request.url.endsWith("/api/v2/users/me")) {
-        body = { roles: admin ? ["ADMIN", "USER"] : ["USER"] };
+        if (admin === "error") status = 500;
+        body = { roles: admin === true ? ["ADMIN", "USER"] : ["USER"] };
       } else if (match) {
         if (request.method === "PATCH") status = patchStatus[match[1]!] ?? 200;
         else body = { id: match[1], name: match[1], filtered: false, ...collections[match[1]!] };
@@ -2541,9 +2542,150 @@ export async function runTests(logger: TestLogger) {
     );
     expect(result).to.deep.equal([]);
     expect(patches(requests)).to.deep.equal([
-      { url: "c1", body: { seriesIds: ["b"] } },
       { url: "c2", body: { seriesIds: ["z", "a"] } },
+      { url: "c1", body: { seriesIds: ["b"] } },
     ]);
+  });
+
+  suite.test(
+    "collection changes: a move into a filtered collection leaves the source alone",
+    async () => {
+      const { requests, thrown, result } = await collectionServer(
+        true,
+        { c1: { seriesIds: ["a", "b"] }, c2: { seriesIds: ["z"], filtered: true } },
+        {},
+        () =>
+          applyManagedCollectionChanges([
+            { id: "1", type: "move", from: col("c1"), to: col("c2"), sourceManga: manga("a") },
+            { id: "2", type: "add", to: col("c1"), sourceManga: manga("q") },
+          ]),
+      );
+      expect(thrown).to.equal(undefined);
+      expect(result).to.deep.equal([
+        { changeId: "1", reason: "This collection has series your account can't see" },
+      ]);
+      expect(patches(requests)).to.deep.equal([
+        { url: "c1", body: { seriesIds: ["a", "b", "q"] } },
+      ]);
+    },
+  );
+
+  suite.test(
+    "collection changes: a move whose add PATCH fails sends no PATCH to the source",
+    async () => {
+      const { requests, thrown, result } = await collectionServer(
+        true,
+        { c1: { seriesIds: ["a", "b"] }, c2: { seriesIds: ["z"] } },
+        { c2: 500 },
+        () =>
+          applyManagedCollectionChanges([
+            { id: "1", type: "move", from: col("c1"), to: col("c2"), sourceManga: manga("a") },
+            { id: "2", type: "add", to: col("c1"), sourceManga: manga("q") },
+          ]),
+      );
+      expect(thrown).to.equal(undefined);
+      expect(result).to.deep.equal([{ changeId: "1", reason: "Komga returned 500" }]);
+      expect(patches(requests).map((p) => p.url)).to.deep.equal(["c2", "c1"]);
+      expect(patches(requests)[1]!.body).to.deep.equal({ seriesIds: ["a", "b", "q"] });
+    },
+  );
+
+  suite.test("collection changes: a move onto its own collection is a no-op", async () => {
+    const { requests, thrown, result } = await collectionServer(
+      true,
+      { c1: { seriesIds: ["a", "b"] }, c2: { seriesIds: ["z"], filtered: true } },
+      {},
+      () =>
+        applyManagedCollectionChanges([
+          { id: "1", type: "move", from: col("c1"), to: col("c1"), sourceManga: manga("a") },
+          { id: "2", type: "add", to: col("c2"), sourceManga: manga("q") },
+        ]),
+    );
+    expect(thrown).to.equal(undefined);
+    expect(result.length).to.equal(1);
+    expect(patches(requests)).to.deep.equal([]);
+  });
+
+  suite.test("collection changes: a failing /users/me throws with nothing written", async () => {
+    const { requests, thrown } = await collectionServer(
+      "error",
+      { c1: { seriesIds: ["a", "b"] } },
+      {},
+      () =>
+        applyManagedCollectionChanges([
+          { id: "1", type: "add", to: col("c1"), sourceManga: manga("x") },
+        ]),
+    );
+    expect(thrown?.message).to.contain("Komga returned 500");
+    expect(requests.length).to.equal(1);
+  });
+
+  suite.test("collection changes: adding a series already there sends no PATCH", async () => {
+    const { requests, thrown, result } = await collectionServer(
+      true,
+      { c1: { seriesIds: ["a", "b"] } },
+      {},
+      () =>
+        applyManagedCollectionChanges([
+          { id: "1", type: "add", to: col("c1"), sourceManga: manga("a") },
+        ]),
+    );
+    expect(thrown).to.equal(undefined);
+    expect(result).to.deep.equal([]);
+    expect(patches(requests)).to.deep.equal([]);
+  });
+
+  suite.test(
+    "collection changes: a malformed collection fails its edits without throwing",
+    async () => {
+      const { requests, thrown, result } = await collectionServer(
+        true,
+        { c1: {} as CollectionState, c2: { seriesIds: ["z"] } },
+        {},
+        () =>
+          applyManagedCollectionChanges([
+            { id: "1", type: "add", to: col("c1"), sourceManga: manga("x") },
+            { id: "2", type: "add", to: col("c2"), sourceManga: manga("y") },
+          ]),
+      );
+      expect(thrown).to.equal(undefined);
+      expect(result).to.deep.equal([
+        { changeId: "1", reason: "Komga returned an unexpected collection" },
+      ]);
+      expect(patches(requests).map((p) => p.url)).to.deep.equal(["c2"]);
+    },
+  );
+
+  suite.test(
+    "collection changes: no-ops and failures together return only the failures",
+    async () => {
+      const { requests, thrown, result } = await collectionServer(
+        true,
+        { c1: { seriesIds: ["a", "b"] }, c2: { seriesIds: ["z"], filtered: true } },
+        {},
+        () =>
+          applyManagedCollectionChanges([
+            { id: "1", type: "add", to: col("c1"), sourceManga: manga("a") },
+            { id: "2", type: "remove", from: col("c1"), sourceManga: manga("nope") },
+            { id: "3", type: "add", to: col("c2"), sourceManga: manga("q") },
+          ]),
+      );
+      expect(thrown).to.equal(undefined);
+      expect(result.map((f) => f.changeId)).to.deep.equal(["3"]);
+      expect(patches(requests)).to.deep.equal([]);
+    },
+  );
+
+  suite.test("collection reads ask for unpaged lists", async () => {
+    const reads = await routeRequests(
+      () => JSON.stringify({ content: [] }),
+      async () => {
+        await getManagedCollections();
+        await getManagedCollectionItems([col("c1")]);
+      },
+    );
+    expect(reads.requests.length).to.equal(2);
+    for (const request of reads.requests) expect(request.url).to.contain("unpaged=true");
   });
 
   suite.test("collection changes: emptying a collection fails but the rest apply", async () => {

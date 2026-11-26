@@ -49,13 +49,11 @@ import { isHiddenSeries } from "../Komga/implementations/shared/filters.js";
 import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
 import {
   getAdultGenres,
-  getBaseUrl,
   getHideAdultContent,
   getIncludeOneshots,
   getSectionStyle,
   getSelectedLibraries,
   setAdultGenres,
-  setBaseUrl,
   setHideAdultContent,
   setIncludeOneshots,
   setSectionStyle,
@@ -1223,26 +1221,49 @@ export async function runTests(logger: TestLogger) {
     expect(failed).to.equal(undefined);
   });
 
-  const withBase = async <T>(url: string, run: () => Promise<T>): Promise<T> => {
-    const saved = getBaseUrl();
-    setBaseUrl(url);
-    try {
-      return await run();
-    } finally {
-      setBaseUrl(saved);
-    }
-  };
-
   suite.test("processChapterReadActionQueue reports every action as failed offline", async () => {
     const actions = [
       { id: "a1", chapterId: "b1" },
       { id: "a2", chapterId: "b2" },
     ] as never;
-    const result = await withBase("http://127.0.0.1:9", () =>
+    const result = await withResponse(0, new Error("down"), () =>
       processChapterReadActionQueue(actions),
     );
     expect(result.successfulItems).to.deep.equal([]);
     expect(result.failedItems).to.deep.equal(["a1", "a2"]);
+  });
+
+  suite.test("processChapterReadActionQueue lists each id once when results mix", async () => {
+    const actions = [
+      { id: "a1", chapterId: "b1" },
+      { id: "a2", chapterId: "b2" },
+    ] as never;
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    let calls = 0;
+    app.scheduleRequest = async () => [
+      { status: calls++ === 0 ? 200 : 500, headers: {} },
+      new TextEncoder().encode("").buffer,
+    ];
+    try {
+      const result = await processChapterReadActionQueue(actions);
+      expect(result.successfulItems).to.deep.equal(["a1"]);
+      expect(result.failedItems).to.deep.equal(["a2"]);
+    } finally {
+      app.scheduleRequest = original;
+    }
+  });
+
+  suite.test("progress form Mark Read shows an error footer instead of throwing", async () => {
+    const form = (await routeRequests(progressServer(0), () =>
+      getMangaProgressManagementForm(sourceManga),
+    ).then((r) => r.result)) as unknown as {
+      handleMarkRead(): Promise<void>;
+      getSections(): { items?: unknown; footer?: string }[];
+    };
+    await withResponse(500, "", () => form.handleMarkRead());
+    const footers = JSON.stringify(form.getSections());
+    expect(footers).to.contain("Could not mark read: Komga returned 500");
   });
 
   suite.test("processChapterReadActionQueue patches each book as completed", async () => {

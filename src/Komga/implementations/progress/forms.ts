@@ -24,6 +24,7 @@ export class KomgaProgressForm extends Form {
   private readonly chapters: Chapter[];
   private current: Chapter | undefined;
   private selectedId: string;
+  private actionError: string | undefined;
 
   constructor(
     private readonly sourceManga: SourceManga,
@@ -69,7 +70,7 @@ export class KomgaProgressForm extends Form {
           }),
         ],
       ),
-      Section("actions", [
+      Section({ id: "actions", footer: this.actionError }, [
         ButtonRow("mark_unread", {
           title: "Mark Unread",
           onSelect: Application.Selector(this as KomgaProgressForm, "handleMarkUnread"),
@@ -88,16 +89,26 @@ export class KomgaProgressForm extends Form {
   }
 
   async handleMarkUnread(): Promise<void> {
-    await this.markUnread();
+    try {
+      await this.markUnread();
+      this.actionError = undefined;
+    } catch (err) {
+      this.actionError = `Could not mark unread: ${(err as Error).message}`;
+    }
     this.reloadForm();
   }
 
   async handleMarkRead(): Promise<void> {
-    await komgaFetch(`/api/v1/series/${this.sourceManga.mangaId}/read-progress`, {
-      method: "POST",
-    });
-    this.current = this.chapters[this.chapters.length - 1];
-    this.selectedId = this.current?.chapterId ?? UNREAD_ID;
+    try {
+      await komgaFetch(`/api/v1/series/${this.sourceManga.mangaId}/read-progress`, {
+        method: "POST",
+      });
+      this.current = this.chapters[this.chapters.length - 1];
+      this.selectedId = this.current?.chapterId ?? UNREAD_ID;
+      this.actionError = undefined;
+    } catch (err) {
+      this.actionError = `Could not mark read: ${(err as Error).message}`;
+    }
     this.reloadForm();
   }
 

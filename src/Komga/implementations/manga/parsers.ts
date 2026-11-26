@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Exikle */
 
-import type { SourceManga, TagSection } from "@paperback/types";
+import type { MangaInfoStaffSection, SourceManga, TagSection } from "@paperback/types";
 
 import { seriesThumbnail } from "../../services/network";
 import { parseContentRating } from "../shared/content-rating";
@@ -84,5 +84,27 @@ export function toSourceManga(series: SeriesDto): SourceManga {
         booksInProgress: String(series.booksInProgressCount),
       },
     },
+  };
+}
+
+// One person per unique author name; Komga lists a person once per role.
+export function staffSection(series: SeriesDto): MangaInfoStaffSection | undefined {
+  const rolesByName = new Map<string, string[]>();
+  for (const { name, role } of series.booksMetadata.authors ?? []) {
+    const roles = rolesByName.get(name) ?? [];
+    const label = capitalise(role);
+    if (role && !roles.includes(label)) roles.push(label);
+    rolesByName.set(name, roles);
+  }
+  if (rolesByName.size === 0) return undefined;
+  const imageUrl = seriesThumbnail(series.id);
+  return {
+    type: "staff",
+    id: "author",
+    title: "Creators",
+    items: [...rolesByName].map(([name, roles]) => ({
+      id: name,
+      staff: { title: name, imageUrl, ...(roles.length > 0 ? { subtitle: roles.join(", ") } : {}) },
+    })),
   };
 }

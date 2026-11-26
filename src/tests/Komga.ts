@@ -35,8 +35,12 @@ import {
   getManagedCollectionItems,
   getManagedCollections,
 } from "../Komga/implementations/managed-collection/main.js";
-import { getMangaDetails } from "../Komga/implementations/manga/main.js";
-import { pickShareUrl, toSourceManga } from "../Komga/implementations/manga/parsers.js";
+import { getMangaDetails, relationSections } from "../Komga/implementations/manga/main.js";
+import {
+  pickShareUrl,
+  staffSection,
+  toSourceManga,
+} from "../Komga/implementations/manga/parsers.js";
 import {
   chapterForProgress,
   getMangaProgress,
@@ -96,7 +100,7 @@ import {
 import { Komga } from "../Komga/main.js";
 import sourceInfo from "../Komga/pbconfig.js";
 import { KomgaInterceptor, shouldAuthorise } from "../Komga/services/interceptor.js";
-import { buildUrl, komgaFetch, pageUrl } from "../Komga/services/network.js";
+import { buildUrl, komgaFetch, pageUrl, seriesThumbnail } from "../Komga/services/network.js";
 import { TestSuite, registerDefaultTests } from "./suite.js";
 
 export async function runTests(logger: TestLogger) {
@@ -2253,6 +2257,112 @@ export async function runTests(logger: TestLogger) {
       }
       return JSON.stringify({ lastReadContinuousNumberSort: lastRead });
     };
+
+  suite.test("staffSection merges roles per author and uses the series thumbnail", async () => {
+    const section = staffSection({
+      ...series,
+      booksMetadata: {
+        summary: "",
+        authors: [
+          { name: "W1", role: "writer" },
+          { name: "P1", role: "penciller" },
+          { name: "W1", role: "inker" },
+        ],
+      },
+    });
+    expect(section?.id).to.equal("author");
+    expect(section?.title).to.equal("Creators");
+    expect(section?.items).to.deep.equal([
+      {
+        id: "W1",
+        staff: { title: "W1", subtitle: "Writer, Inker", imageUrl: seriesThumbnail("s1") },
+      },
+      { id: "P1", staff: { title: "P1", subtitle: "Penciller", imageUrl: seriesThumbnail("s1") } },
+    ]);
+  });
+
+  suite.test("staffSection is undefined without authors", async () => {
+    expect(staffSection({ ...series, booksMetadata: { summary: "", authors: [] } })).to.equal(
+      undefined,
+    );
+  });
+
+  suite.test("relationSections drops the series itself, caps at 20 and keeps order", async () => {
+    const ids = ["s1", ...Array.from({ length: 25 }, (_, i) => `x${i}`)];
+    const { result, requests } = await routeRequests(
+      (request) => {
+        if (request.url.includes("/series/s1/collections")) {
+          return JSON.stringify([{ id: "c1", name: "Favourites" }]);
+        }
+        return JSON.stringify({
+          content: ids.map((id) => ({ id, metadata: { title: `T ${id}` } })),
+          last: true,
+          number: 0,
+        });
+      },
+      () => relationSections("s1"),
+    );
+    expect(result.length).to.equal(1);
+    expect(result[0]!.id).to.equal("collection:c1");
+    expect(result[0]!.title).to.equal("In Favourites");
+    expect(result[0]!.items.length).to.equal(20);
+    expect(result[0]!.items.map((i) => i.id)).to.deep.equal(ids.slice(1, 21));
+    expect(result[0]!.items[0]).to.deep.equal({
+      id: "x0",
+      imageUrl: seriesThumbnail("x0"),
+      title: "T x0",
+    });
+    const list = requests.find((r) => r.url.includes("/series/list"))!;
+    expect(list.method).to.equal("POST");
+    expect(list.url).to.contain("sort=collection.number%2Casc");
+    expect(list.url).to.contain("size=21");
+    expect(JSON.parse(list.body ?? "{}")).to.deep.equal({
+      condition: { collectionId: { operator: "is", value: "c1" } },
+    });
+  });
+
+  suite.test("relationSections gives one section per collection", async () => {
+    const { result } = await routeRequests(
+      (request) => {
+        if (request.url.includes("/series/s1/collections")) {
+          return JSON.stringify([
+            { id: "c1", name: "A" },
+            { id: "c2", name: "B" },
+          ]);
+        }
+        return JSON.stringify({ content: [{ id: "x", metadata: { title: "X" } }], last: true });
+      },
+      () => relationSections("s1"),
+    );
+    expect(result.map((s) => s.id)).to.deep.equal(["collection:c1", "collection:c2"]);
+  });
+
+  suite.test("getMangaDetails keeps staff when the collections lookup fails", async () => {
+    const { result } = await routeRequests(
+      (request) => {
+        if (request.url.includes("/collections")) throw new Error("boom");
+        return JSON.stringify(series);
+      },
+      () => getMangaDetails("s1"),
+    );
+    expect(result.mangaInfo.extras?.map((e) => e.id)).to.deep.equal(["author"]);
+  });
+
+  suite.test("getMangaDetails adds one relation section per collection", async () => {
+    const { result } = await routeRequests(
+      (request) => {
+        if (request.url.includes("/series/s1/collections")) {
+          return JSON.stringify([{ id: "c1", name: "A" }]);
+        }
+        if (request.url.includes("/series/list")) {
+          return JSON.stringify({ content: [{ id: "x", metadata: { title: "X" } }], last: true });
+        }
+        return JSON.stringify(series);
+      },
+      () => getMangaDetails("s1"),
+    );
+    expect(result.mangaInfo.extras?.map((e) => e.id)).to.deep.equal(["author", "collection:c1"]);
+  });
 
   suite.test("getMangaProgress returns undefined when nothing is read", async () => {
     const { result } = await routeRequests(progressServer(0), () => getMangaProgress(sourceManga));

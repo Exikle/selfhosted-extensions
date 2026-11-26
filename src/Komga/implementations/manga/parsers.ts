@@ -49,6 +49,13 @@ export function toSourceManga(series: SeriesDto): SourceManga {
       })),
     },
   ];
+  if (metadata.publisher) {
+    tagGroups.push({
+      id: "publishers",
+      title: "Publisher",
+      tags: [{ id: encodeTagId("publisher", metadata.publisher), title: metadata.publisher }],
+    });
+  }
 
   return {
     mangaId: series.id,

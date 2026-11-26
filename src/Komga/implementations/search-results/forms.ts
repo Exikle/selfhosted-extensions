@@ -4,6 +4,7 @@
 import {
   AdvancedSearchForm,
   closureSelector,
+  InputRow,
   Section,
   TriStateSelectRow,
   type FormSectionElement,
@@ -11,8 +12,10 @@ import {
   type TagSection,
 } from "@paperback/types";
 
-// Group ids are "genres", "tags", "libraries" and "collections"; each maps tag ids to a state.
+// Group ids are "genres", "tags", "libraries", "collections", "readStatus", "seriesStatus",
+// "publishers", "languages" and "ageRatings"; each maps tag ids to a state.
 export type KomgaSearchMetadata = {
+  author?: string;
   filters?: Record<string, Record<string, "included" | "excluded">>;
 };
 
@@ -40,7 +43,19 @@ export class KomgaSearchForm extends AdvancedSearchForm {
   }
 
   override getSections(): FormSectionElement<unknown>[] {
-    return this.groups.map((group) => this.groupSection(group));
+    return [...this.groups.map((group) => this.groupSection(group)), this.authorSection()];
+  }
+
+  private authorSection(): FormSectionElement<unknown> {
+    return Section({ id: "author_section", header: "Author" }, [
+      InputRow("author", {
+        title: "Author",
+        value: this.metadata.author ?? "",
+        onValueChange: closureSelector(this, "author", async (value: string) => {
+          this.metadata.author = value;
+        }),
+      }),
+    ]);
   }
 
   private groupSection(group: TagSection): FormSectionElement<unknown> {
@@ -50,7 +65,7 @@ export class KomgaSearchForm extends AdvancedSearchForm {
         title: group.title,
         layout: "list",
         value: this.filters[group.id] ?? {},
-        allowExclusion: true,
+        allowExclusion: group.id !== "readStatus",
         allowEmptySelection: true,
         items: group.tags.map((tag) => ({ id: tag.id, title: tag.title })),
         onValueChange: closureSelector(

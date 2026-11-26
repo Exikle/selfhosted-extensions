@@ -35,20 +35,26 @@ export const SORT_OPTIONS = [
   { id: "recentlyUpdated", label: "Recently Updated", sort: "lastModified,desc" },
   { id: "recentlyRead", label: "Recently Read", sort: "readDate,desc" },
   { id: "mostChapters", label: "Most Chapters", sort: "booksCount,desc" },
+  { id: "releaseDate", label: "Release Date", sort: "booksMetadata.releaseDate,desc" },
+  { id: "random", label: "Random", sort: "random" },
 ];
 
 const TITLE_SORT = "metadata.titleSort,asc";
+const COLLECTION_SORT = "collection.number,asc";
 
 // The one place that picks the Komga sort. Komga applies relevance only when
 // the request has search text, so Best Match falls back to title without it.
 export function resolveSort(
   sortId: string | undefined,
   title: string,
-  _filters: KomgaSearchMetadata["filters"],
+  filters: KomgaSearchMetadata["filters"],
 ): string {
   const picked = SORT_OPTIONS.find((o) => o.id === sortId);
   const sort = picked?.sort ?? "relevance";
-  return sort === "relevance" && title.trim() === "" ? TITLE_SORT : sort;
+  if (sort !== "relevance" || title.trim() !== "") return sort;
+  // With exactly one included collection, show its series in the collection's own order.
+  const included = Object.entries(filters?.collections ?? {}).filter(([, s]) => s === "included");
+  return included.length === 1 ? COLLECTION_SORT : TITLE_SORT;
 }
 
 // The form's group id decides which Komga condition field the value goes to.
@@ -57,15 +63,37 @@ const CONDITION_FIELDS: Record<string, string> = {
   tags: "tag",
   libraries: "libraryId",
   collections: "collectionId",
+  readStatus: "readStatus",
+  seriesStatus: "seriesStatus",
+  publishers: "publisher",
+  languages: "language",
+  ageRatings: "ageRating",
 };
 
 // Included values of these groups are ORed; genres and tags stay ANDed.
-const ANY_OF_GROUPS = new Set(["libraries", "collections"]);
+const ANY_OF_GROUPS = new Set([
+  "libraries",
+  "collections",
+  "readStatus",
+  "seriesStatus",
+  "publishers",
+  "languages",
+  "ageRatings",
+]);
+
+// "None" is the unrated bucket; other values are Int ratings. Anything else is skipped.
+function ageRatingCondition(value: string, excluded: boolean): object | undefined {
+  if (value === "None") return { ageRating: { operator: excluded ? "isNotNull" : "isNull" } };
+  const rating = Number(value);
+  if (value.trim() === "" || !Number.isInteger(rating)) return undefined;
+  return { ageRating: { operator: excluded ? "isNot" : "is", value: rating } };
+}
 
 export function buildSearchBody(
   title: string | undefined,
   filters: KomgaSearchMetadata["filters"],
   base: object[],
+  author?: string,
 ): object {
   const conditions: object[] = [...base];
   for (const [group, states] of Object.entries(filters ?? {})) {
@@ -77,12 +105,18 @@ export function buildSearchBody(
       const decoded = decodeTagId(id);
       if (!decoded) continue;
       const excluded = state === "excluded";
-      const condition = { [field]: { operator: excluded ? "isNot" : "is", value: decoded.value } };
+      const condition =
+        group === "ageRatings"
+          ? ageRatingCondition(decoded.value, excluded)
+          : { [field]: { operator: excluded ? "isNot" : "is", value: decoded.value } };
+      if (!condition) continue;
       if (alternatives && !excluded) alternatives.push(condition);
       else conditions.push(condition);
     }
     if (alternatives && alternatives.length > 0) conditions.push({ anyOf: alternatives });
   }
+  const name = author?.trim();
+  if (name) conditions.push({ author: { operator: "is", value: { name } } });
   return {
     fullTextSearch: escapeLucene(title ?? ""),
     ...(conditions.length > 0 ? { condition: { allOf: conditions } } : {}),
@@ -98,14 +132,17 @@ export async function getSearchResults(
     const page = typeof metadata?.page === "number" ? metadata.page : 0;
     const raw = query.metadata;
     const filters = raw && !Array.isArray(raw) ? raw.filters : undefined;
+    const author = raw && !Array.isArray(raw) && typeof raw.author === "string" ? raw.author : "";
     const komgaSort = resolveSort(sort?.id, query.title ?? "", filters);
     const result = await komgaFetch<Page<SeriesDto>>("/api/v1/series/list", {
       method: "POST",
       query: { page, size: PAGE_SIZE, sort: komgaSort },
-      body: buildSearchBody(query.title, filters, [
-        ...hiddenGenreConditions(),
-        ...scopeConditions(),
-      ]),
+      body: buildSearchBody(
+        query.title,
+        filters,
+        [...hiddenGenreConditions(), ...scopeConditions()],
+        author,
+      ),
     });
     const items: SearchResultItem[] = (result.content ?? []).map((series) => ({
       mangaId: series.id,
@@ -113,7 +150,10 @@ export async function getSearchResults(
       imageUrl: seriesThumbnail(series.id),
       contentRating: parseContentRating(series.metadata ?? {}),
     }));
-    return items.length === PAGE_SIZE ? { items, metadata: { page: page + 1 } } : { items };
+    // Every random page reshuffles, so a next page would repeat or skip series.
+    return items.length === PAGE_SIZE && komgaSort !== "random"
+      ? { items, metadata: { page: page + 1 } }
+      : { items };
   } catch (err) {
     // Paperback also calls this during global searches, so it must not throw.
     console.log(`[Komga] search failed: ${errorMessage(err)}`);
@@ -127,6 +167,24 @@ export async function getSortingOptions(): Promise<SortingOption[]> {
 
 const stringTags = (kind: "genre" | "tag", values: string[]) =>
   values.map((value) => ({ id: encodeTagId(kind, value), title: capitalise(value) }));
+
+const plainTags = (kind: "publisher" | "language" | "ageRating", values: string[]) =>
+  values
+    .filter((value) => typeof value === "string" && value !== "")
+    .map((value) => ({ id: encodeTagId(kind, value), title: value }));
+
+const READ_STATUSES = [
+  ["UNREAD", "Unread"],
+  ["IN_PROGRESS", "In progress"],
+  ["READ", "Read"],
+] as const;
+
+const SERIES_STATUSES = [
+  ["ONGOING", "Ongoing"],
+  ["ENDED", "Ended"],
+  ["HIATUS", "Hiatus"],
+  ["ABANDONED", "Abandoned"],
+] as const;
 
 async function loadCollections(): Promise<CollectionDto[]> {
   const all: CollectionDto[] = [];
@@ -152,12 +210,16 @@ async function lookup<T>(load: () => Promise<T[]>): Promise<T[]> {
 export async function getAdvancedSearchForm(
   query: SearchQuery<KomgaSearchMetadata>,
 ): Promise<AdvancedSearchForm> {
-  const [genres, tags, libraries, collections] = await Promise.all([
-    lookup(() => komgaFetch<string[]>("/api/v1/genres")),
-    lookup(() => komgaFetch<string[]>("/api/v1/tags/series")),
-    lookup(() => komgaFetch<LibraryDto[]>("/api/v1/libraries")),
-    lookup(loadCollections),
-  ]);
+  const [genres, tags, libraries, collections, publishers, languages, ageRatings] =
+    await Promise.all([
+      lookup(() => komgaFetch<string[]>("/api/v1/genres")),
+      lookup(() => komgaFetch<string[]>("/api/v1/tags/series")),
+      lookup(() => komgaFetch<LibraryDto[]>("/api/v1/libraries")),
+      lookup(loadCollections),
+      lookup(() => komgaFetch<string[]>("/api/v1/publishers")),
+      lookup(() => komgaFetch<string[]>("/api/v1/languages")),
+      lookup(() => komgaFetch<string[]>("/api/v1/age-ratings")),
+    ]);
   const groups: TagSection[] = [
     { id: "genres", title: "Genres", tags: stringTags("genre", genres) },
     { id: "tags", title: "Tags", tags: stringTags("tag", tags) },
@@ -171,6 +233,25 @@ export async function getAdvancedSearchForm(
       title: "Collections",
       tags: collections.map((c) => ({ id: encodeTagId("collection", c.id), title: c.name })),
     },
+    {
+      id: "readStatus",
+      title: "Read Status",
+      tags: READ_STATUSES.map(([value, title]) => ({
+        id: encodeTagId("readStatus", value),
+        title,
+      })),
+    },
+    {
+      id: "seriesStatus",
+      title: "Series Status",
+      tags: SERIES_STATUSES.map(([value, title]) => ({
+        id: encodeTagId("seriesStatus", value),
+        title,
+      })),
+    },
+    { id: "publishers", title: "Publishers", tags: plainTags("publisher", publishers) },
+    { id: "languages", title: "Languages", tags: plainTags("language", languages) },
+    { id: "ageRatings", title: "Age Ratings", tags: plainTags("ageRating", ageRatings) },
   ];
   return new KomgaSearchForm(query, groups);
 }

@@ -455,6 +455,11 @@ export async function runTests(logger: TestLogger) {
         title: "Tags",
         tags: [{ id: encodeTagId("tag", "time travel"), title: "Time travel" }],
       },
+      {
+        id: "publishers",
+        title: "Publisher",
+        tags: [{ id: encodeTagId("publisher", "Pub"), title: "Pub" }],
+      },
     ]);
     expect(mangaInfo.additionalInfo).to.deep.equal({
       language: "ja",
@@ -492,6 +497,7 @@ export async function runTests(logger: TestLogger) {
       metadata: {
         ...series.metadata,
         summary: "",
+        publisher: undefined,
         genres: undefined,
         tags: undefined,
         alternateTitles: undefined,
@@ -864,6 +870,8 @@ export async function runTests(logger: TestLogger) {
       ["recentlyUpdated", "lastModified,desc"],
       ["recentlyRead", "readDate,desc"],
       ["mostChapters", "booksCount,desc"],
+      ["releaseDate", "booksMetadata.releaseDate,desc"],
+      ["random", "random"],
     ]);
     const options = await getSortingOptions();
     expect(options.map((o) => o.id)).to.deep.equal(SORT_OPTIONS.map((o) => o.id));
@@ -986,8 +994,172 @@ export async function runTests(logger: TestLogger) {
     const form = await withResponse(0, new Error("down"), () =>
       getAdvancedSearchForm({ title: "" }),
     );
-    expect(form.getSections().length).to.equal(4);
+    expect(form.getSections().length).to.equal(10);
     expect(form.getSearchQueryMetadata()).to.deep.equal({ filters: {} });
+  });
+
+  const search = (filters: Record<string, Record<string, "included" | "excluded">>, a?: string) =>
+    buildSearchBody("", filters, [], a) as { condition: { allOf: object[] } };
+
+  suite.test("buildSearchBody ORs included read statuses", async () => {
+    const body = search({
+      readStatus: {
+        [encodeTagId("readStatus", "IN_PROGRESS")]: "included",
+        [encodeTagId("readStatus", "READ")]: "included",
+      },
+    });
+    expect(body.condition.allOf).to.deep.equal([
+      {
+        anyOf: [
+          { readStatus: { operator: "is", value: "IN_PROGRESS" } },
+          { readStatus: { operator: "is", value: "READ" } },
+        ],
+      },
+    ]);
+  });
+
+  suite.test("buildSearchBody excludes a series status", async () => {
+    const body = search({ seriesStatus: { [encodeTagId("seriesStatus", "ENDED")]: "excluded" } });
+    expect(body.condition.allOf).to.deep.equal([
+      { seriesStatus: { operator: "isNot", value: "ENDED" } },
+    ]);
+  });
+
+  suite.test("buildSearchBody maps publishers and languages", async () => {
+    const body = search({
+      publishers: { [encodeTagId("publisher", "Shueisha")]: "included" },
+      languages: { [encodeTagId("language", "ja")]: "excluded" },
+    });
+    expect(body.condition.allOf).to.deep.equal([
+      { anyOf: [{ publisher: { operator: "is", value: "Shueisha" } }] },
+      { language: { operator: "isNot", value: "ja" } },
+    ]);
+  });
+
+  suite.test("buildSearchBody maps age ratings to isNull and Int values", async () => {
+    const body = search({
+      ageRatings: {
+        [encodeTagId("ageRating", "None")]: "included",
+        [encodeTagId("ageRating", "16")]: "included",
+        [encodeTagId("ageRating", "18")]: "excluded",
+        [encodeTagId("ageRating", "abc")]: "included",
+      },
+    });
+    expect(body.condition.allOf).to.deep.equal([
+      { ageRating: { operator: "isNot", value: 18 } },
+      {
+        anyOf: [
+          { ageRating: { operator: "isNull" } },
+          { ageRating: { operator: "is", value: 16 } },
+        ],
+      },
+    ]);
+    const none = search({ ageRatings: { [encodeTagId("ageRating", "None")]: "excluded" } });
+    expect(none.condition.allOf).to.deep.equal([{ ageRating: { operator: "isNotNull" } }]);
+  });
+
+  suite.test("buildSearchBody maps author text to an object value", async () => {
+    const body = buildSearchBody("", undefined, [], " Oda ") as { condition: { allOf: object[] } };
+    expect(body.condition.allOf).to.deep.equal([
+      { author: { operator: "is", value: { name: "Oda" } } },
+    ]);
+    expect(buildSearchBody("", undefined, [], "  ")).to.deep.equal({ fullTextSearch: "" });
+  });
+
+  suite.test("getSearchResults sends the author from the query metadata", async () => {
+    const { requests } = await captureRequests(seriesJson(0), () =>
+      getSearchResults({ title: "", metadata: { author: "Oda" } }, undefined, undefined),
+    );
+    expect(JSON.parse(requests[0]!.body!).condition.allOf).to.deep.contain({
+      author: { operator: "is", value: { name: "Oda" } },
+    });
+  });
+
+  suite.test("release date and random sorts map to Komga sorts", async () => {
+    expect(resolveSort("releaseDate", "", {})).to.equal("booksMetadata.releaseDate,desc");
+    expect(resolveSort("random", "x", {})).to.equal("random");
+    const sorts = await getSortingOptions();
+    expect(sorts.map((o) => o.id)).to.include.members(["releaseDate", "random"]);
+  });
+
+  suite.test("random gives no next page on a full page", async () => {
+    const { result, requests } = await captureRequests(seriesJson(40), () =>
+      getSearchResults({ title: "" }, undefined, { id: "random", label: "Random" }),
+    );
+    expect(result.items.length).to.equal(40);
+    expect(result.metadata).to.equal(undefined);
+    expect(decodeURIComponent(requests[0]!.url)).to.contain("sort=random");
+  });
+
+  suite.test("best match with one included collection uses collection order", async () => {
+    const one = { collections: { [encodeTagId("collection", "c1")]: "included" as const } };
+    expect(resolveSort("bestMatch", "", one)).to.equal("collection.number,asc");
+    expect(resolveSort(undefined, "", one)).to.equal("collection.number,asc");
+    expect(resolveSort("bestMatch", "naruto", one)).to.equal("relevance");
+    expect(resolveSort("titleAsc", "", one)).to.equal("metadata.titleSort,asc");
+    const two = {
+      collections: {
+        [encodeTagId("collection", "c1")]: "included" as const,
+        [encodeTagId("collection", "c2")]: "included" as const,
+      },
+    };
+    expect(resolveSort("bestMatch", "", two)).to.equal("metadata.titleSort,asc");
+    const excluded = { collections: { [encodeTagId("collection", "c1")]: "excluded" as const } };
+    expect(resolveSort("bestMatch", "", excluded)).to.equal("metadata.titleSort,asc");
+  });
+
+  suite.test("a publisher tag from the details page searches that publisher", async () => {
+    const group = toSourceManga(series).mangaInfo.tagGroups!.find((g) => g.title === "Publisher")!;
+    expect(group.id).to.equal("publishers");
+    const body = search({ [group.id]: { [group.tags[0]!.id]: "included" } });
+    expect(body.condition.allOf).to.deep.equal([
+      { anyOf: [{ publisher: { operator: "is", value: "Pub" } }] },
+    ]);
+  });
+
+  suite.test("getAdvancedSearchForm lists publishers, languages and age ratings", async () => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    app.scheduleRequest = async (request: { url: string }) => {
+      const body = request.url.includes("/api/v1/publishers")
+        ? '["Shueisha"]'
+        : request.url.includes("/api/v1/languages")
+          ? '["ja"]'
+          : request.url.includes("/api/v1/age-ratings")
+            ? '["None","16"]'
+            : "[]";
+      return [{ status: 200, headers: {} }, new TextEncoder().encode(body).buffer];
+    };
+    try {
+      const form = await getAdvancedSearchForm({ title: "" });
+      const json = JSON.stringify(form.getSections());
+      expect(json).to.contain(encodeTagId("publisher", "Shueisha"));
+      expect(json).to.contain(encodeTagId("language", "ja"));
+      expect(json).to.contain(encodeTagId("ageRating", "None"));
+      expect(json).to.contain(encodeTagId("ageRating", "16"));
+      expect(json).to.contain(encodeTagId("readStatus", "IN_PROGRESS"));
+      expect(json).to.contain(encodeTagId("seriesStatus", "HIATUS"));
+      const author = form.getSections().find((s) => s.id === "author_section")!;
+      expect(author.items[0]!.id).to.equal("author");
+    } finally {
+      app.scheduleRequest = original;
+    }
+  });
+
+  suite.test("the new lookups fall back to empty lists on a 500", async () => {
+    const form = await withResponse(500, "", () => getAdvancedSearchForm({ title: "" }));
+    const json = JSON.stringify(form.getSections());
+    expect(json).to.not.contain("publisher:");
+    expect(json).to.not.contain("language:");
+    expect(json).to.not.contain("ageRating:");
+    expect(form.getSections().length).to.equal(10);
+  });
+
+  suite.test("the author row keeps the typed text in the query metadata", async () => {
+    const form = new KomgaSearchForm({ title: "", metadata: { author: "Oda" } }, []);
+    const row = form.getSections()[0]!.items[0] as unknown as { value: string };
+    expect(row.value).to.equal("Oda");
+    expect(form.getSearchQueryMetadata()).to.deep.equal({ author: "Oda", filters: {} });
   });
 
   suite.test("getAdvancedSearchForm tolerates array metadata", async () => {
@@ -1133,7 +1305,7 @@ export async function runTests(logger: TestLogger) {
 
   suite.test("getAdvancedSearchForm tolerates non-array lookups", async () => {
     const form = await withResponse(200, '{"a":1}', () => getAdvancedSearchForm({ title: "" }));
-    expect(form.getSections().length).to.equal(4);
+    expect(form.getSections().length).to.equal(10);
   });
 
   const seriesFixture = (over: Partial<SeriesDto> = {}): SeriesDto =>

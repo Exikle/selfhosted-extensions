@@ -1,7 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Exikle */
 
-export type TagKind = "genre" | "tag" | "library" | "collection";
+export type TagKind =
+  | "genre"
+  | "tag"
+  | "library"
+  | "collection"
+  | "publisher"
+  | "ageRating"
+  | "readStatus"
+  | "seriesStatus"
+  | "language";
 
 export const normaliseBaseUrl = (url: string): string => url.trim().replace(/\/+$/, "");
 

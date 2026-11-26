@@ -9,6 +9,11 @@ import {
   processTitlesForUpdates,
 } from "./implementations/chapter-providing/main";
 import { getMangaDetails } from "./implementations/manga/main";
+import {
+  getAdvancedSearchForm,
+  getSearchResults,
+  getSortingOptions,
+} from "./implementations/search-results/main";
 import type KomgaConfig from "./pbconfig";
 import { KomgaInterceptor } from "./services/interceptor";
 
@@ -20,6 +25,9 @@ export class KomgaExtension implements Partial<ExtensionImpl<typeof KomgaConfig>
   getChapters = getChapters;
   getChapterDetails = getChapterDetails;
   processTitlesForUpdates = processTitlesForUpdates;
+  getSearchResults = getSearchResults;
+  getSortingOptions = getSortingOptions;
+  getAdvancedSearchForm = getAdvancedSearchForm;
 
   async initialise(): Promise<void> {
     this.mainRequestInterceptor.registerInterceptor();

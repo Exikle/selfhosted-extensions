@@ -17,8 +17,16 @@ import {
 } from "../Komga/implementations/chapter-providing/parsers.js";
 import { getMangaDetails } from "../Komga/implementations/manga/main.js";
 import { pickShareUrl, toSourceManga } from "../Komga/implementations/manga/parsers.js";
+import {
+  SORT_OPTIONS,
+  buildSearchBody,
+  getAdvancedSearchForm,
+  getSearchResults,
+  getSortingOptions,
+} from "../Komga/implementations/search-results/main.js";
 import { checkConnection, classifyConnection } from "../Komga/implementations/shared/connection.js";
 import { parseContentRating } from "../Komga/implementations/shared/content-rating.js";
+import { isHiddenSeries } from "../Komga/implementations/shared/filters.js";
 import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
 import { chapterLabel, parseChapterTitle } from "../Komga/implementations/shared/titles.js";
 import {
@@ -602,6 +610,138 @@ export async function runTests(logger: TestLogger) {
       expect(calls).to.deep.equal(["a", "b"]);
     },
   );
+
+  suite.test("buildSearchBody decodes tag ids into is and isNot conditions", async () => {
+    const body = buildSearchBody(
+      "x",
+      {
+        genres: {
+          [encodeTagId("genre", "Science Fiction")]: "included",
+          [encodeTagId("genre", "日本語")]: "excluded",
+        },
+      },
+      [],
+    );
+    expect(body).to.deep.equal({
+      fullTextSearch: "x",
+      condition: {
+        allOf: [
+          { genre: { operator: "is", value: "Science Fiction" } },
+          { genre: { operator: "isNot", value: "日本語" } },
+        ],
+      },
+    });
+  });
+
+  suite.test("buildSearchBody leaves out condition when there is nothing to filter", async () => {
+    const body = buildSearchBody("", undefined, []);
+    expect(body).to.not.have.property("condition");
+  });
+
+  suite.test("buildSearchBody keeps the base conditions", async () => {
+    const base = [{ oneShot: { operator: "isFalse" } }];
+    const body = buildSearchBody("", { tags: { [encodeTagId("tag", "a")]: "included" } }, base);
+    expect(body).to.deep.equal({
+      fullTextSearch: "",
+      condition: { allOf: [...base, { tag: { operator: "is", value: "a" } }] },
+    });
+  });
+
+  suite.test("sorting options match the spec table", async () => {
+    expect(SORT_OPTIONS.map((o) => [o.id, o.sort])).to.deep.equal([
+      ["titleAsc", "metadata.titleSort,asc"],
+      ["titleDesc", "metadata.titleSort,desc"],
+      ["recentlyAdded", "created,desc"],
+      ["recentlyUpdated", "lastModified,desc"],
+      ["recentlyRead", "readDate,desc"],
+      ["mostChapters", "booksCount,desc"],
+    ]);
+    const options = await getSortingOptions();
+    expect(options.map((o) => o.id)).to.deep.equal(SORT_OPTIONS.map((o) => o.id));
+  });
+
+  suite.test("isHiddenSeries is false when adult content is shown", async () => {
+    expect(isHiddenSeries(["Hentai"])).to.equal(false);
+  });
+
+  const captureRequests = async <T>(body: string, run: () => Promise<T>) => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    const requests: { url: string; body?: string }[] = [];
+    app.scheduleRequest = async (request: { url: string; body?: string }) => {
+      requests.push(request);
+      return [{ status: 200, headers: {} }, new TextEncoder().encode(body).buffer];
+    };
+    try {
+      return { result: await run(), requests };
+    } finally {
+      app.scheduleRequest = original;
+    }
+  };
+
+  const seriesJson = (n: number) =>
+    JSON.stringify({
+      content: Array.from({ length: n }, (_, i) => ({
+        id: `s${i}`,
+        metadata: { title: `T${i}`, genres: [] },
+      })),
+    });
+
+  suite.test("getSearchResults sends page, size and sort, and pages on a full page", async () => {
+    const { result, requests } = await captureRequests(seriesJson(40), () =>
+      getSearchResults(
+        { title: "x" },
+        { page: 2 },
+        { id: "recentlyAdded", label: "Recently Added" },
+      ),
+    );
+    expect(result.items.length).to.equal(40);
+    expect(result.metadata).to.deep.equal({ page: 3 });
+    const url = decodeURIComponent(requests[0]!.url);
+    expect(url).to.contain("/api/v1/series/list");
+    expect(url).to.contain("page=2");
+    expect(url).to.contain("size=40");
+    expect(url).to.contain("sort=created,desc");
+    expect(JSON.parse(requests[0]!.body!).fullTextSearch).to.equal("x");
+  });
+
+  suite.test("getSearchResults stops on a short page and defaults to title sort", async () => {
+    const { result, requests } = await captureRequests(seriesJson(3), () =>
+      getSearchResults({ title: "" }, undefined, undefined),
+    );
+    expect(result.items.length).to.equal(3);
+    expect(result.metadata).to.equal(undefined);
+    expect(decodeURIComponent(requests[0]!.url)).to.contain("sort=metadata.titleSort,asc");
+  });
+
+  suite.test("getSearchResults returns no items when the transport fails", async () => {
+    const result = await withResponse(0, new Error("down"), () =>
+      getSearchResults({ title: "x" }, undefined, undefined),
+    );
+    expect(result).to.deep.equal({ items: [] });
+  });
+
+  suite.test("getSearchResults returns no items on an HTTP error", async () => {
+    const result = await withResponse(500, "", () =>
+      getSearchResults({ title: "x" }, undefined, undefined),
+    );
+    expect(result).to.deep.equal({ items: [] });
+  });
+
+  suite.test("getAdvancedSearchForm falls back to empty groups when lookups fail", async () => {
+    const form = await withResponse(0, new Error("down"), () =>
+      getAdvancedSearchForm({ title: "" }),
+    );
+    expect(form.getSections().length).to.equal(4);
+    expect(form.getSearchQueryMetadata()).to.deep.equal({ filters: {} });
+  });
+
+  suite.test("getAdvancedSearchForm tolerates array metadata", async () => {
+    const form = await withResponse(0, new Error("down"), () =>
+      getAdvancedSearchForm({ title: "", metadata: [] as never }),
+    );
+    expect(form.getSearchQueryMetadata()).to.deep.equal({ filters: {} });
+  });
 
   await suite.run();
 }

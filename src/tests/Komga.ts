@@ -2040,12 +2040,37 @@ export async function runTests(logger: TestLogger) {
       expect(requests[0]!.url).to.contain("size=40");
       expect(result.items.map((i) => "chapterId" in i && i.chapterId)).to.deep.equal(["b3", "b1"]);
       expect(result.metadata).to.equal(undefined);
-      const more = await withResponse(
-        200,
-        JSON.stringify({ content: [books[0]], last: false, number: 0 }),
+      const { result: more } = await routeRequests(
+        (request) =>
+          request.url.includes("/readlists/")
+            ? JSON.stringify({ content: [books[0]], last: false, number: 0 })
+            : readListServer([], { r1: books })(request),
         () => getDiscoverSectionItems(sectionFor("readList:r1"), { page: 0 }),
-      ).catch(() => undefined);
-      expect(more?.metadata).to.deep.equal({ page: 1 });
+      );
+      expect(more.items.map((i) => "chapterId" in i && i.chapterId)).to.deep.equal(["b3"]);
+      expect(more.metadata).to.deep.equal({ page: 1 });
+    });
+  });
+
+  suite.test("read list books and the Collections row follow the selected libraries", async () => {
+    await withSearchState(async () => {
+      const server = readListServer([], { r1: [bookFixture({ id: "b1", seriesId: "s1" })] });
+      setSelectedLibraries(["l1", "l2"]);
+      const scoped = await routeRequests(server, () =>
+        getDiscoverSectionItems(sectionFor("readList:r1"), undefined),
+      );
+      expect(scoped.requests[0]!.url).to.contain("library_id=l1");
+      expect(scoped.requests[0]!.url).to.contain("library_id=l2");
+      const cols = await captureRequests('{"content":[]}', () =>
+        getDiscoverSectionItems(sectionFor("collections"), undefined),
+      );
+      expect(cols.requests[0]!.url).to.contain("library_id=l1");
+      expect(cols.requests[0]!.url).to.contain("library_id=l2");
+      setSelectedLibraries([]);
+      const open = await routeRequests(server, () =>
+        getDiscoverSectionItems(sectionFor("readList:r1"), undefined),
+      );
+      expect(open.requests[0]!.url).to.not.contain("library_id");
     });
   });
 

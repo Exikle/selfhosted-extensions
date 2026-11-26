@@ -154,7 +154,7 @@ async function readListItems(
 ): Promise<PagedResults<DiscoverSectionItem>> {
   const result = await komgaFetch<Page<BookDto>>(
     `/api/v1/readlists/${encodeURIComponent(readListId)}/books`,
-    { query: { page, size: PAGE_SIZE } },
+    { query: { page, size: PAGE_SIZE, ...scopeQuery() } },
   );
   const books = result.content ?? [];
   const { visible, seriesById } = await resolveBookSeries(books);

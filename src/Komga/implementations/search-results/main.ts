@@ -13,6 +13,7 @@ import type {
 import { komgaFetch, seriesThumbnail } from "../../services/network";
 import { parseContentRating } from "../shared/content-rating";
 import { hiddenGenreConditions, scopeConditions } from "../shared/filters";
+import { escapeLucene } from "../shared/lucene";
 import {
   PAGE_SIZE,
   type CollectionDto,
@@ -27,6 +28,7 @@ const MAX_COLLECTION_PAGES = 50;
 
 // Each pairing was checked on a live server, asc and desc.
 export const SORT_OPTIONS = [
+  { id: "bestMatch", label: "Best Match", sort: "relevance" },
   { id: "titleAsc", label: "Title (A–Z)", sort: "metadata.titleSort,asc" },
   { id: "titleDesc", label: "Title (Z–A)", sort: "metadata.titleSort,desc" },
   { id: "recentlyAdded", label: "Recently Added", sort: "created,desc" },
@@ -34,6 +36,20 @@ export const SORT_OPTIONS = [
   { id: "recentlyRead", label: "Recently Read", sort: "readDate,desc" },
   { id: "mostChapters", label: "Most Chapters", sort: "booksCount,desc" },
 ];
+
+const TITLE_SORT = "metadata.titleSort,asc";
+
+// The one place that picks the Komga sort. Komga applies relevance only when
+// the request has search text, so Best Match falls back to title without it.
+export function resolveSort(
+  sortId: string | undefined,
+  title: string,
+  _filters: KomgaSearchMetadata["filters"],
+): string {
+  const picked = SORT_OPTIONS.find((o) => o.id === sortId);
+  const sort = picked?.sort ?? "relevance";
+  return sort === "relevance" && title.trim() === "" ? TITLE_SORT : sort;
+}
 
 // The form's group id decides which Komga condition field the value goes to.
 const CONDITION_FIELDS: Record<string, string> = {
@@ -68,7 +84,7 @@ export function buildSearchBody(
     if (alternatives && alternatives.length > 0) conditions.push({ anyOf: alternatives });
   }
   return {
-    fullTextSearch: title ?? "",
+    fullTextSearch: escapeLucene(title ?? ""),
     ...(conditions.length > 0 ? { condition: { allOf: conditions } } : {}),
   };
 }
@@ -80,9 +96,9 @@ export async function getSearchResults(
 ): Promise<PagedResults<SearchResultItem>> {
   try {
     const page = typeof metadata?.page === "number" ? metadata.page : 0;
-    const komgaSort = (SORT_OPTIONS.find((o) => o.id === sort?.id) ?? SORT_OPTIONS[0]!).sort;
     const raw = query.metadata;
     const filters = raw && !Array.isArray(raw) ? raw.filters : undefined;
+    const komgaSort = resolveSort(sort?.id, query.title ?? "", filters);
     const result = await komgaFetch<Page<SeriesDto>>("/api/v1/series/list", {
       method: "POST",
       query: { page, size: PAGE_SIZE, sort: komgaSort },

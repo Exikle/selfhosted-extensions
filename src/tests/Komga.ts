@@ -42,6 +42,7 @@ import {
   getAdvancedSearchForm,
   getSearchResults,
   getSortingOptions,
+  resolveSort,
 } from "../Komga/implementations/search-results/main.js";
 import { KomgaContentForm } from "../Komga/implementations/settings-form/forms/content.js";
 import { KomgaHomepageForm } from "../Komga/implementations/settings-form/forms/homepage.js";
@@ -51,6 +52,7 @@ import { getSettingsForm } from "../Komga/implementations/settings-form/main.js"
 import { checkConnection, classifyConnection } from "../Komga/implementations/shared/connection.js";
 import { parseContentRating } from "../Komga/implementations/shared/content-rating.js";
 import { isHiddenSeries } from "../Komga/implementations/shared/filters.js";
+import { escapeLucene } from "../Komga/implementations/shared/lucene.js";
 import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
 import {
   getAdultGenres,
@@ -783,6 +785,7 @@ export async function runTests(logger: TestLogger) {
 
   suite.test("sorting options match the spec table", async () => {
     expect(SORT_OPTIONS.map((o) => [o.id, o.sort])).to.deep.equal([
+      ["bestMatch", "relevance"],
       ["titleAsc", "metadata.titleSort,asc"],
       ["titleDesc", "metadata.titleSort,desc"],
       ["recentlyAdded", "created,desc"],
@@ -837,6 +840,51 @@ export async function runTests(logger: TestLogger) {
     expect(url).to.contain("size=40");
     expect(url).to.contain("sort=created,desc");
     expect(JSON.parse(requests[0]!.body!).fullTextSearch).to.equal("x");
+  });
+
+  suite.test("escapeLucene escapes every reserved character", async () => {
+    expect(escapeLucene("Re:Zero (2011)")).to.equal("Re\\:Zero \\(2011\\)");
+    expect(escapeLucene("plain text 123")).to.equal("plain text 123");
+    expect(escapeLucene("a&&b||c")).to.equal("a\\&\\&b\\|\\|c");
+    for (const ch of [
+      "+",
+      "-",
+      "!",
+      "(",
+      ")",
+      "{",
+      "}",
+      "[",
+      "]",
+      "^",
+      '"',
+      "~",
+      "*",
+      "?",
+      ":",
+      "\\",
+      "/",
+    ]) {
+      expect(escapeLucene(`a${ch}b`)).to.equal(`a\\${ch}b`);
+    }
+  });
+
+  suite.test("resolveSort picks relevance only when there is text", async () => {
+    expect(resolveSort(undefined, "naruto", {})).to.equal("relevance");
+    expect(resolveSort("bestMatch", "naruto", {})).to.equal("relevance");
+    expect(resolveSort("bestMatch", "", {})).to.equal("metadata.titleSort,asc");
+    expect(resolveSort(undefined, "", {})).to.equal("metadata.titleSort,asc");
+    expect(resolveSort("titleDesc", "x", {})).to.equal("metadata.titleSort,desc");
+    expect(resolveSort("unknown", "x", {})).to.equal("relevance");
+  });
+
+  suite.test("getSearchResults sends escaped text and relevance sort", async () => {
+    const { result, requests } = await captureRequests(seriesJson(2), () =>
+      getSearchResults({ title: "Re:Zero" }, undefined, undefined),
+    );
+    expect(result.items.length).to.equal(2);
+    expect(decodeURIComponent(requests[0]!.url)).to.contain("sort=relevance");
+    expect(JSON.parse(requests[0]!.body!).fullTextSearch).to.equal("Re\\:Zero");
   });
 
   suite.test("getSearchResults stops on a short page and defaults to title sort", async () => {

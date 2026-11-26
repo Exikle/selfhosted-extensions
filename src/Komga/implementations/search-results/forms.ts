@@ -16,6 +16,8 @@ import {
 // "publishers", "languages" and "ageRatings"; each maps tag ids to a state.
 export type KomgaSearchMetadata = {
   author?: string;
+  // Set by the Collections row on Home when the tapped collection is ordered.
+  collectionOrdered?: boolean;
   filters?: Record<string, Record<string, "included" | "excluded">>;
 };
 
@@ -73,6 +75,8 @@ export class KomgaSearchForm extends AdvancedSearchForm {
           rowId,
           async (value: Record<string, "included" | "excluded">) => {
             this.filters[group.id] = value;
+            // The flag described the collection that was tapped, not whatever is picked now.
+            if (group.id === "collections") delete this.metadata.collectionOrdered;
           },
         ),
       }),

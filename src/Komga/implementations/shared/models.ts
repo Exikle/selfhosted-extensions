@@ -5,7 +5,7 @@
 
 export const PAGE_SIZE = 40;
 
-export type AuthorDto = { name: string; role: string };
+export type AuthorDto = { name: string; role?: string };
 export type AlternateTitleDto = { label: string; title: string };
 export type WebLinkDto = { label: string; url: string };
 
@@ -59,6 +59,7 @@ export type LibraryDto = { id: string; name: string };
 export type CollectionDto = {
   id: string;
   name: string;
+  ordered?: boolean;
   seriesIds: string[];
   filtered: boolean;
 };

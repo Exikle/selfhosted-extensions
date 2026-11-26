@@ -48,13 +48,14 @@ export function resolveSort(
   sortId: string | undefined,
   title: string,
   filters: KomgaSearchMetadata["filters"],
+  collectionOrdered?: boolean,
 ): string {
   const picked = SORT_OPTIONS.find((o) => o.id === sortId);
   const sort = picked?.sort ?? "relevance";
   if (sort !== "relevance" || title.trim() !== "") return sort;
-  // With exactly one included collection, show its series in the collection's own order.
+  // With exactly one included collection that is ordered, show its series in that order.
   const included = Object.entries(filters?.collections ?? {}).filter(([, s]) => s === "included");
-  return included.length === 1 ? COLLECTION_SORT : TITLE_SORT;
+  return included.length === 1 && collectionOrdered === true ? COLLECTION_SORT : TITLE_SORT;
 }
 
 // The form's group id decides which Komga condition field the value goes to.
@@ -133,7 +134,8 @@ export async function getSearchResults(
     const raw = query.metadata;
     const filters = raw && !Array.isArray(raw) ? raw.filters : undefined;
     const author = raw && !Array.isArray(raw) && typeof raw.author === "string" ? raw.author : "";
-    const komgaSort = resolveSort(sort?.id, query.title ?? "", filters);
+    const ordered = raw && !Array.isArray(raw) ? raw.collectionOrdered === true : false;
+    const komgaSort = resolveSort(sort?.id, query.title ?? "", filters, ordered);
     const result = await komgaFetch<Page<SeriesDto>>("/api/v1/series/list", {
       method: "POST",
       query: { page, size: PAGE_SIZE, sort: komgaSort },

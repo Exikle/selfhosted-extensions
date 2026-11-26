@@ -128,13 +128,14 @@ Try Regular, Large and Hero on each section.
 - [ ] With the key set, tap "Test Connection". Footer says "Connected as <email>".
 - [ ] Type a wrong key. Footer says "Invalid API key".
 - [ ] Clear the key. Username and Password turn back on.
+- [ ] Typing an API key doesn't drop the keyboard.
 - [ ] Root screen: the "About" section shows "Extension Version" 4.1.0 and "Komga Version".
 - [ ] On a Komga older than 1.19 (if I have one), About shows a warning. Skip if not.
 - [ ] On a Komga older than 1.20 with a key set, About warns "API keys need Komga 1.20 or later". Skip if not.
 
 ## 4.1.0: Homepage and Content settings
 
-- [ ] Homepage Settings: each section with a style shows a menu row. Tap it. Regular, Large, Hero and Hidden are in the menu.
+- [ ] Section style menus appear and work: each section with a style shows a menu row. Tap it. Regular, Large, Hero and Hidden are in the menu.
 - [ ] Pick a style from the menu. Go to Discover. The section changes right away.
 - [ ] "Read Lists" group lists my read lists, all off. If none, it says "No read lists".
 - [ ] Turn "Hide Adult Content" off. "Genres To Hide" is greyed out.
@@ -145,7 +146,7 @@ Try Regular, Large and Hero on each section.
 - [ ] "Latest Chapters" shows my newest books. Tap one. The chapter opens.
 - [ ] Latest Chapters follows my library choice and "Include One-Shots".
 - [ ] Keep Reading now puts the series I read last at the front.
-- [ ] "Collections" lists my Komga collections. Tap one. Search opens with it included, in the collection's own order.
+- [ ] "Collections" lists my Komga collections. Tap one. Search opens with it included. An ordered collection is in its own order; any other is A to Z.
 - [ ] Turn on a read list in Homepage Settings. It shows as its own section, in read-list order.
 - [ ] Turn it off. The section leaves Discover.
 
@@ -163,7 +164,7 @@ Try Regular, Large and Hero on each section.
 
 ## 4.1.0: Title page
 
-- [ ] A series shows a "Publishers" tag. Tap it. Search opens with that publisher.
+- [ ] A series shows a "Publisher" tag. Tap it. Search opens with that publisher.
 - [ ] "Creators" lists the authors, each with their roles.
 - [ ] Tap a creator. Search opens with the Author box filled.
 - [ ] A series in a collection shows an "In <collection>" section with the other series.
@@ -177,6 +178,8 @@ Collections sync both ways. Changing them needs an admin account.
 - [ ] Add a series to one in Paperback. Komga shows it in that collection.
 - [ ] Remove a series in Paperback. Komga drops it.
 - [ ] Add a series in Komga. Paperback shows it after a refresh.
+- [ ] Remove a series from a collection in Komga. After refreshing, Paperback drops it from that collection.
+- [ ] Turn off the server (or Wi-Fi) and refresh collections. Your Paperback collections stay.
 - [ ] Try to remove the last series in a collection. It fails: "Komga collections can't be empty".
 - [ ] With a non-admin account (if I have one), a change fails: "Changing Komga collections needs an admin account". Skip if not.
 

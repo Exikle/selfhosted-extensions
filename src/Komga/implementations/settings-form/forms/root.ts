@@ -16,6 +16,11 @@ import { KomgaContentForm } from "./content";
 import { KomgaHomepageForm } from "./homepage";
 import { KomgaServerForm } from "./server";
 
+// Found versions, per base URL, for the session; a failed lookup is not kept.
+const versionCache = new Map<string, string>();
+
+export const clearServerVersionCache = (): void => versionCache.clear();
+
 export class KomgaSettingsForm extends Form {
   private status = "Checking…";
   // undefined while the lookup runs; "" once it failed.
@@ -66,8 +71,10 @@ export class KomgaSettingsForm extends Form {
   }
 
   override async formWillAppear(): Promise<void> {
+    const baseUrl = getBaseUrl();
+    const cached = versionCache.get(baseUrl);
     this.status = "Checking…";
-    this.serverVersion = undefined;
+    this.serverVersion = cached;
     this.reloadForm();
     // Run side by side so a slow version lookup never holds back the status row.
     await Promise.all([
@@ -75,10 +82,13 @@ export class KomgaSettingsForm extends Form {
         this.status = message;
         this.reloadForm();
       }),
-      getServerVersion().then((version) => {
-        this.serverVersion = version ?? "";
-        this.reloadForm();
-      }),
+      cached !== undefined
+        ? Promise.resolve()
+        : getServerVersion().then((version) => {
+            if (version) versionCache.set(baseUrl, version);
+            this.serverVersion = version ?? "";
+            this.reloadForm();
+          }),
     ]);
   }
 }

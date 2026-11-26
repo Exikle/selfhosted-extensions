@@ -92,8 +92,8 @@ export function staffSection(series: SeriesDto): MangaInfoStaffSection | undefin
   const rolesByName = new Map<string, string[]>();
   for (const { name, role } of series.booksMetadata.authors ?? []) {
     const roles = rolesByName.get(name) ?? [];
-    const label = capitalise(role);
-    if (role && !roles.includes(label)) roles.push(label);
+    const label = role ? capitalise(role) : "";
+    if (label && !roles.includes(label)) roles.push(label);
     rolesByName.set(name, roles);
   }
   if (rolesByName.size === 0) return undefined;

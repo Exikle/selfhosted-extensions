@@ -11,7 +11,7 @@ import { staffSection, toSourceManga } from "./parsers";
 
 const RELATION_LIMIT = 20;
 
-// Other series in each collection this series is in, in collection order. Never throws.
+// Other series in each collection this series is in, in its order (title for unordered ones). Never throws.
 export async function relationSections(seriesId: string): Promise<MangaInfoRelationSection[]> {
   try {
     const collections = await komgaFetch<CollectionDto[]>(`/api/v1/series/${seriesId}/collections`);
@@ -21,7 +21,12 @@ export async function relationSections(seriesId: string): Promise<MangaInfoRelat
           // The collectionId condition is what makes Komga honour collection.number.
           const page = await komgaFetch<Page<SeriesDto>>("/api/v1/series/list", {
             method: "POST",
-            query: { sort: "collection.number,asc", size: RELATION_LIMIT + 1 },
+            // Komga only honours collection.number for a collection that is ordered.
+            query: {
+              sort:
+                collection.ordered === true ? "collection.number,asc" : "metadata.titleSort,asc",
+              size: RELATION_LIMIT + 1,
+            },
             body: {
               condition: {
                 allOf: [

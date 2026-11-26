@@ -36,7 +36,7 @@ Home
 - Latest Chapters shows your newest books.
 - Genres and Collections rows. Tap one to search.
 - Read-list rows. Turn on the ones you want.
-- Each row can be Regular, Large, Hero or Hidden.
+- On Deck, Keep Reading, Nearly Finished, Recently Added and Recently Updated can be Regular, Large, Hero or Hidden. Genres, Latest Chapters, Collections and the read lists are on/off switches.
 
 Search
 

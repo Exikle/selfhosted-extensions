@@ -58,7 +58,10 @@ import {
 } from "../Komga/implementations/search-results/main.js";
 import { KomgaContentForm } from "../Komga/implementations/settings-form/forms/content.js";
 import { KomgaHomepageForm } from "../Komga/implementations/settings-form/forms/homepage.js";
-import { KomgaSettingsForm } from "../Komga/implementations/settings-form/forms/root.js";
+import {
+  KomgaSettingsForm,
+  clearServerVersionCache,
+} from "../Komga/implementations/settings-form/forms/root.js";
 import { KomgaServerForm } from "../Komga/implementations/settings-form/forms/server.js";
 import { getSettingsForm } from "../Komga/implementations/settings-form/main.js";
 import { resolveBookSeries } from "../Komga/implementations/shared/book-series.js";
@@ -1252,19 +1255,22 @@ export async function runTests(logger: TestLogger) {
 
   suite.test("best match with one included collection uses collection order", async () => {
     const one = { collections: { [encodeTagId("collection", "c1")]: "included" as const } };
-    expect(resolveSort("bestMatch", "", one)).to.equal("collection.number,asc");
-    expect(resolveSort(undefined, "", one)).to.equal("collection.number,asc");
-    expect(resolveSort("bestMatch", "naruto", one)).to.equal("relevance");
-    expect(resolveSort("titleAsc", "", one)).to.equal("metadata.titleSort,asc");
+    expect(resolveSort("bestMatch", "", one, true)).to.equal("collection.number,asc");
+    expect(resolveSort(undefined, "", one, true)).to.equal("collection.number,asc");
+    expect(resolveSort("bestMatch", "naruto", one, true)).to.equal("relevance");
+    expect(resolveSort("titleAsc", "", one, true)).to.equal("metadata.titleSort,asc");
+    // A collection that is not ordered, or old metadata without the flag, sorts by title.
+    expect(resolveSort("bestMatch", "", one, false)).to.equal("metadata.titleSort,asc");
+    expect(resolveSort("bestMatch", "", one)).to.equal("metadata.titleSort,asc");
     const two = {
       collections: {
         [encodeTagId("collection", "c1")]: "included" as const,
         [encodeTagId("collection", "c2")]: "included" as const,
       },
     };
-    expect(resolveSort("bestMatch", "", two)).to.equal("metadata.titleSort,asc");
+    expect(resolveSort("bestMatch", "", two, true)).to.equal("metadata.titleSort,asc");
     const excluded = { collections: { [encodeTagId("collection", "c1")]: "excluded" as const } };
-    expect(resolveSort("bestMatch", "", excluded)).to.equal("metadata.titleSort,asc");
+    expect(resolveSort("bestMatch", "", excluded, true)).to.equal("metadata.titleSort,asc");
   });
 
   suite.test("a publisher tag from the details page searches that publisher", async () => {
@@ -1961,7 +1967,9 @@ export async function runTests(logger: TestLogger) {
   };
 
   suite.test("Collections items search the collection by id", async () => {
-    const body = JSON.stringify({ content: [{ id: "c 1", name: "Favourites" }] });
+    const body = JSON.stringify({
+      content: [{ id: "c 1", name: "Favourites", ordered: true }],
+    });
     const { result, requests } = await captureRequests(body, () =>
       getDiscoverSectionItems(sectionFor("collections"), undefined),
     );
@@ -1975,14 +1983,71 @@ export async function runTests(logger: TestLogger) {
           title: "",
           metadata: {
             filters: { collections: { [encodeTagId("collection", "c 1")]: "included" } },
+            collectionOrdered: true,
           },
         },
       },
     ]);
     const item = result.items[0] as { searchQuery: { title: string; metadata: never } };
-    const filters = (item.searchQuery.metadata as { filters: never }).filters;
-    expect(resolveSort(undefined, item.searchQuery.title, filters)).to.equal(
-      "collection.number,asc",
+    const meta = item.searchQuery.metadata as {
+      filters: never;
+      collectionOrdered?: boolean;
+    };
+    expect(
+      resolveSort(undefined, item.searchQuery.title, meta.filters, meta.collectionOrdered),
+    ).to.equal("collection.number,asc");
+  });
+
+  suite.test(
+    "a collection that is not ordered gets no ordered flag and sorts by title",
+    async () => {
+      const body = JSON.stringify({
+        content: [
+          { id: "c1", name: "Loose", ordered: false },
+          { id: "c2", name: "Old server" },
+        ],
+      });
+      const { result } = await captureRequests(body, () =>
+        getDiscoverSectionItems(sectionFor("collections"), undefined),
+      );
+      for (const item of result.items) {
+        const meta = (item as { searchQuery: { metadata: { collectionOrdered?: boolean } } })
+          .searchQuery.metadata;
+        expect("collectionOrdered" in meta).to.equal(false);
+        expect(resolveSort(undefined, "", meta as never, meta.collectionOrdered)).to.equal(
+          "metadata.titleSort,asc",
+        );
+      }
+    },
+  );
+
+  suite.test("a search tap on an ordered collection requests collection order", async () => {
+    const { requests } = await captureRequests('{"content":[]}', () =>
+      getSearchResults(
+        {
+          title: "",
+          metadata: {
+            filters: { collections: { [encodeTagId("collection", "c1")]: "included" } },
+            collectionOrdered: true,
+          },
+        },
+        undefined,
+        undefined,
+      ),
+    );
+    expect(decodeURIComponent(requests[0]!.url)).to.contain("sort=collection.number,asc");
+    const unordered = await captureRequests('{"content":[]}', () =>
+      getSearchResults(
+        {
+          title: "",
+          metadata: { filters: { collections: { [encodeTagId("collection", "c1")]: "included" } } },
+        },
+        undefined,
+        undefined,
+      ),
+    );
+    expect(decodeURIComponent(unordered.requests[0]!.url)).to.contain(
+      "sort=metadata.titleSort,asc",
     );
   });
 
@@ -2043,6 +2108,8 @@ export async function runTests(logger: TestLogger) {
       expect(requests[0]!.url).to.contain("/api/v1/readlists/r1/books");
       expect(requests[0]!.url).to.contain("page=2");
       expect(requests[0]!.url).to.contain("size=40");
+      expect(requests[0]!.url).to.contain("deleted=false");
+      expect(requests[0]!.url).to.contain("media_status=READY");
       expect(result.items.map((i) => "chapterId" in i && i.chapterId)).to.deep.equal(["b3", "b1"]);
       expect(result.metadata).to.equal(undefined);
       const { result: more } = await routeRequests(
@@ -2102,13 +2169,19 @@ export async function runTests(logger: TestLogger) {
     });
   });
 
-  suite.test("homepage shows No read lists when there are none or the fetch fails", async () => {
-    const empty = new KomgaHomepageForm() as unknown as SettingsLike;
-    expect(rowOf(empty, "read_lists_none").title).to.equal("No read lists");
+  suite.test("homepage read lists show Loading, then No read lists or an error", async () => {
+    const loading = new KomgaHomepageForm() as unknown as SettingsLike;
+    expect(rowOf(loading, "read_lists_status").title).to.equal("Loading…");
+    const { result: none } = await routeRequests(readListServer([]), async () => {
+      const form = new KomgaHomepageForm() as unknown as SettingsLike;
+      await form.formWillAppear!();
+      return form;
+    });
+    expect(rowOf(none, "read_lists_status").title).to.equal("No read lists");
     await withResponse(0, new Error("down"), async () => {
       const failed = new KomgaHomepageForm() as unknown as SettingsLike;
       await failed.formWillAppear!();
-      expect(rowOf(failed, "read_lists_none").title).to.equal("No read lists");
+      expect(rowOf(failed, "read_lists_status").title).to.equal("Could not load read lists");
     });
   });
 
@@ -2282,6 +2355,20 @@ export async function runTests(logger: TestLogger) {
     ]);
   });
 
+  suite.test("staffSection tolerates an author with no role", async () => {
+    const section = staffSection({
+      ...series,
+      booksMetadata: {
+        summary: "",
+        authors: [{ name: "N1" }, { name: "W1", role: "writer" }, { name: "W1" }] as never,
+      },
+    });
+    expect(section?.items).to.deep.equal([
+      { id: "N1", staff: { title: "N1", imageUrl: seriesThumbnail("s1") } },
+      { id: "W1", staff: { title: "W1", subtitle: "Writer", imageUrl: seriesThumbnail("s1") } },
+    ]);
+  });
+
   suite.test("staffSection is undefined without authors", async () => {
     expect(staffSection({ ...series, booksMetadata: { summary: "", authors: [] } })).to.equal(
       undefined,
@@ -2293,7 +2380,7 @@ export async function runTests(logger: TestLogger) {
     const { result, requests } = await routeRequests(
       (request) => {
         if (request.url.includes("/series/s1/collections")) {
-          return JSON.stringify([{ id: "c1", name: "Favourites" }]);
+          return JSON.stringify([{ id: "c1", name: "Favourites", ordered: true }]);
         }
         return JSON.stringify({
           content: ids.map((id) => ({ id, metadata: { title: `T ${id}` } })),
@@ -2320,6 +2407,28 @@ export async function runTests(logger: TestLogger) {
     expect(JSON.parse(list.body ?? "{}")).to.deep.equal({
       condition: { allOf: [{ collectionId: { operator: "is", value: "c1" } }] },
     });
+  });
+
+  suite.test("relation rows sort a collection that is not ordered by title", async () => {
+    const { requests } = await routeRequests(
+      (request) =>
+        request.url.includes("/series/s1/collections")
+          ? JSON.stringify([
+              { id: "c1", name: "Loose", ordered: false },
+              { id: "c2", name: "Old server" },
+              { id: "c3", name: "Ordered", ordered: true },
+            ])
+          : JSON.stringify({ content: [], last: true }),
+      () => relationSections("s1"),
+    );
+    const sorts = requests
+      .filter((r) => r.url.includes("/series/list"))
+      .map((r) => decodeURIComponent(r.url.match(/sort=([^&]+)/)![1]!));
+    expect(sorts).to.deep.equal([
+      "metadata.titleSort,asc",
+      "metadata.titleSort,asc",
+      "collection.number,asc",
+    ]);
   });
 
   suite.test("relation rows apply hidden genres and library scope but not one-shots", async () => {
@@ -2805,6 +2914,7 @@ export async function runTests(logger: TestLogger) {
   // Sections are read while the key is still saved, then frozen for the assertions.
   const aboutRows = async (version: string | undefined, key: string): Promise<SettingsLike> => {
     let sections: ReturnType<SettingsLike["getSections"]> = [];
+    clearServerVersionCache();
     await withApiKey(key, async () => {
       await routeRequests(aboutServer(version), async () => {
         const root = new KomgaSettingsForm() as unknown as SettingsLike;
@@ -2812,6 +2922,7 @@ export async function runTests(logger: TestLogger) {
         sections = root.getSections();
       });
     });
+    clearServerVersionCache();
     return { getSections: () => sections };
   };
 
@@ -2823,10 +2934,12 @@ export async function runTests(logger: TestLogger) {
 
   suite.test("about shows the Komga version, using the public api docs", async () => {
     let root!: SettingsLike;
+    clearServerVersionCache();
     const { requests } = await routeRequests(aboutServer("1.30.2-beta"), async () => {
       root = new KomgaSettingsForm() as unknown as SettingsLike;
       await root.formWillAppear!();
     });
+    clearServerVersionCache();
     expect(rowOf(root, "komga_version").value).to.equal("1.30.2-beta");
     expect(requests.some((r) => r.url.endsWith("/v3/api-docs"))).to.equal(true);
   });
@@ -3238,18 +3351,29 @@ export async function runTests(logger: TestLogger) {
     },
   );
 
-  suite.test("getManagedCollections maps names and returns [] on error", async () => {
+  const rejection = async (run: () => Promise<unknown>): Promise<string | undefined> => {
+    try {
+      await run();
+      return undefined;
+    } catch (error) {
+      return (error as Error).message;
+    }
+  };
+
+  suite.test("getManagedCollections maps names and throws on error", async () => {
     const ok = await withResponse(
       200,
       JSON.stringify({ content: [{ id: "c1", name: "Faves" }], last: true, number: 0 }),
       () => getManagedCollections(),
     );
     expect(ok).to.deep.equal([{ id: "c1", title: "Faves" }]);
-    expect(await withResponse(500, "", () => getManagedCollections())).to.deep.equal([]);
+    expect(await rejection(() => withResponse(500, "", () => getManagedCollections()))).to.contain(
+      "Komga returned 500",
+    );
   });
 
   suite.test(
-    "getManagedCollectionItems maps series and gives [] for a failed collection",
+    "getManagedCollectionItems maps series and throws when a collection read fails",
     async () => {
       const { result } = await routeRequests(
         () =>
@@ -3260,14 +3384,265 @@ export async function runTests(logger: TestLogger) {
       );
       expect(result[0]!.collectionId).to.equal("c1");
       expect(result[0]!.items.map((m) => m.mangaId)).to.deep.equal(["s1"]);
-      const failed = await withResponse(500, "", () => getManagedCollectionItems([col("c1")]));
-      expect(failed).to.deep.equal([{ collectionId: "c1", items: [] }]);
+      const failed = await rejection(() =>
+        withResponse(500, "", () => getManagedCollectionItems([col("c1")])),
+      );
+      expect(failed).to.contain("Komga returned 500");
+    },
+  );
+
+  suite.test("getManagedCollectionItems never returns a partial result", async () => {
+    const message = await rejection(() =>
+      routeRequests(
+        (request) => {
+          if (request.url.includes("/collections/c2/")) throw new Error("down");
+          return JSON.stringify({
+            content: [seriesFixture({ id: "s1", booksMetadata: { authors: [], summary: "" } })],
+          });
+        },
+        () => getManagedCollectionItems([col("c1"), col("c2")]),
+      ),
+    );
+    expect(message).to.contain("c2");
+  });
+
+  suite.test("getManagedCollectionItems returns [] for a collection that read fine", async () => {
+    const { result } = await routeRequests(
+      () => JSON.stringify({ content: [] }),
+      () => getManagedCollectionItems([col("c1")]),
+    );
+    expect(result).to.deep.equal([{ collectionId: "c1", items: [] }]);
+  });
+
+  suite.test("getManagedCollectionItems reads at most 5 collections at a time", async () => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    let inFlight = 0;
+    let peak = 0;
+    app.scheduleRequest = async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      inFlight--;
+      return [{ status: 200, headers: {} }, new TextEncoder().encode('{"content":[]}').buffer];
+    };
+    try {
+      const ids = Array.from({ length: 12 }, (_, i) => `c${i}`);
+      const result = await getManagedCollectionItems(ids.map(col));
+      expect(result.map((r) => r.collectionId)).to.deep.equal(ids);
+    } finally {
+      app.scheduleRequest = original;
+    }
+    expect(peak).to.be.greaterThan(1);
+    expect(peak).to.be.at.most(5);
+  });
+
+  suite.test(
+    "collection changes: moves failing in pass 2 return failures after the adds land",
+    async () => {
+      const { requests, thrown, result } = await collectionServer(
+        true,
+        { c1: { seriesIds: ["a", "b"], filtered: true }, c2: { seriesIds: ["z"] } },
+        {},
+        () =>
+          applyManagedCollectionChanges([
+            { id: "1", type: "move", from: col("c1"), to: col("c2"), sourceManga: manga("a") },
+            { id: "2", type: "move", from: col("c1"), to: col("c2"), sourceManga: manga("b") },
+          ]),
+      );
+      expect(thrown).to.equal(undefined);
+      const reason = "This collection has series your account can't see";
+      expect(result).to.deep.equal([
+        { changeId: "1", reason },
+        { changeId: "2", reason },
+      ]);
+      expect(patches(requests)).to.deep.equal([
+        { url: "c2", body: { seriesIds: ["z", "a", "b"] } },
+      ]);
+    },
+  );
+
+  suite.test(
+    "collection changes: a collection read with no body fails only its changes",
+    async () => {
+      const { requests, thrown, result } = await routeRequests(
+        (request) => {
+          if (request.url.endsWith("/api/v2/users/me")) return JSON.stringify({ roles: ["ADMIN"] });
+          if (request.url.endsWith("/collections/c1")) return "";
+          if (request.url.endsWith("/collections/c2") && request.method !== "PATCH") {
+            return JSON.stringify({ id: "c2", name: "c2", filtered: false, seriesIds: ["z"] });
+          }
+          return "{}";
+        },
+        async () => {
+          try {
+            return await applyManagedCollectionChanges([
+              { id: "1", type: "add", to: col("c1"), sourceManga: manga("x") },
+              { id: "2", type: "add", to: col("c2"), sourceManga: manga("y") },
+            ]);
+          } catch (error) {
+            return error as Error;
+          }
+        },
+      ).then(({ requests, result }) => ({
+        requests,
+        thrown: result instanceof Error ? result : undefined,
+        result: result instanceof Error ? [] : result,
+      }));
+      expect(thrown).to.equal(undefined);
+      expect(result).to.deep.equal([
+        { changeId: "1", reason: "Komga returned an unexpected collection" },
+      ]);
+      expect(patches(requests).map((p) => p.url)).to.deep.equal(["c2"]);
     },
   );
 
   suite.test("the extension advertises and implements managed collections", async () => {
     expect(sourceInfo.capabilities).to.include(SourceIntents.MANAGED_COLLECTION_PROVIDING);
     expect(Komga.applyManagedCollectionChanges).to.equal(applyManagedCollectionChanges);
+  });
+
+  suite.test(
+    "typing an API key reloads the form only when it flips between empty and set",
+    async () => {
+      const server = new KomgaServerForm() as unknown as SettingsLike & { reloadForm: () => void };
+      let reloads = 0;
+      server.reloadForm = () => {
+        reloads++;
+      };
+      const type = (value: string) => (server.handleApiKey as (v: string) => Promise<void>)(value);
+      await type("");
+      expect(reloads).to.equal(0);
+      await type("a");
+      await type("ab");
+      expect(reloads).to.equal(1);
+      expect(rowOf(server, "username").isDisabled).to.equal(true);
+      await type("   ");
+      expect(reloads).to.equal(2);
+      expect(rowOf(server, "username").isDisabled).to.equal(false);
+      await type("k");
+      await type("");
+      expect(reloads).to.equal(4);
+    },
+  );
+
+  suite.test("the settings screen asks for the Komga version once per base URL", async () => {
+    clearServerVersionCache();
+    try {
+      let first!: SettingsLike;
+      const { requests } = await routeRequests(aboutServer("1.30.2"), async () => {
+        first = new KomgaSettingsForm() as unknown as SettingsLike;
+        await first.formWillAppear!();
+        const second = new KomgaSettingsForm() as unknown as SettingsLike;
+        await second.formWillAppear!();
+        expect(rowOf(second, "komga_version").value).to.equal("1.30.2");
+      });
+      expect(rowOf(first, "komga_version").value).to.equal("1.30.2");
+      expect(requests.filter((r) => r.url.endsWith("/v3/api-docs")).length).to.equal(1);
+    } finally {
+      clearServerVersionCache();
+    }
+  });
+
+  suite.test("the Komga version cache is per base URL and skips failed lookups", async () => {
+    clearServerVersionCache();
+    const saved = getBaseUrl();
+    try {
+      const appear = () => (new KomgaSettingsForm() as unknown as SettingsLike).formWillAppear!();
+      await withResponse(500, "", appear);
+      const { requests } = await routeRequests(aboutServer("1.30.2"), async () => {
+        await appear();
+        await appear();
+        setBaseUrl("https://other.example");
+        await appear();
+      });
+      // The failed lookup was not kept, and the second base URL has its own entry.
+      expect(requests.filter((r) => r.url.endsWith("/v3/api-docs")).length).to.equal(2);
+    } finally {
+      setBaseUrl(saved);
+      clearServerVersionCache();
+    }
+  });
+
+  suite.test("no enabled read lists means no read list request", async () => {
+    await withReadLists({}, async () => {
+      const { result, requests } = await routeRequests(
+        readListServer([{ id: "r1", name: "Summer" }]),
+        () => getDiscoverSections(),
+      );
+      expect(requests.some((r) => r.url.includes("/readlists"))).to.equal(false);
+      expect(result.some((s) => s.id.startsWith("readList:"))).to.equal(false);
+    });
+  });
+
+  suite.test(
+    "enabled read lists are one array, with the old per-id keys as a fallback",
+    async () => {
+      await withReadLists({}, async () => {
+        setReadListEnabled("r1", true);
+        setReadListEnabled("r2", true);
+        expect(Application.getState("enabledReadLists")).to.deep.equal(["r1", "r2"]);
+        setReadListEnabled("r1", false);
+        expect(Application.getState("enabledReadLists")).to.deep.equal(["r2"]);
+        expect(getReadListEnabled("r1")).to.equal(false);
+        Application.setState(true, "readList.gone");
+        try {
+          expect(getReadListEnabled("gone")).to.equal(true);
+          setReadListEnabled("gone", false);
+          expect(getReadListEnabled("gone")).to.equal(false);
+        } finally {
+          Application.setState(false, "readList.gone");
+        }
+      });
+    },
+  );
+
+  const queuedUpdateServer =
+    (updatedIds: string[]) =>
+    (request: { url: string }): string =>
+      request.url.includes("/series/updated")
+        ? JSON.stringify({
+            content: updatedIds.map((id) => ({ id, lastModified: "2026-06-01T12:00:00Z" })),
+            last: true,
+            number: 0,
+          })
+        : JSON.stringify({ content: [], last: true, number: 0 });
+
+  suite.test("the update check sends only queued, updated series to the books walk", async () => {
+    const { manager } = recordingManager(["a", "z"]);
+    const { requests } = await routeRequests(queuedUpdateServer(["a", "b", "c"]), () =>
+      processTitlesForUpdates(manager, updateCutoff),
+    );
+    const books = requests.filter((r) => r.url.includes("/books/list"));
+    expect(books.length).to.equal(1);
+    expect(JSON.parse(books[0]!.body!).condition.allOf[0]).to.deep.equal({
+      anyOf: [{ seriesId: { operator: "is", value: "a" } }],
+    });
+  });
+
+  suite.test("the update check sends no books request when no queued series changed", async () => {
+    const { manager, priorities } = recordingManager(["z"]);
+    const { requests } = await routeRequests(queuedUpdateServer(["a", "b"]), () =>
+      processTitlesForUpdates(manager, updateCutoff),
+    );
+    expect(requests.some((r) => r.url.includes("/books/list"))).to.equal(false);
+    expect(Object.fromEntries(priorities)).to.deep.equal({ z: "skip" });
+  });
+
+  suite.test("the update check reads the queue once", async () => {
+    let reads = 0;
+    const { manager } = recordingManager(["a"]);
+    const counting = {
+      ...manager,
+      getQueuedItems: () => {
+        reads++;
+        return manager.getQueuedItems();
+      },
+    } as unknown as UpdateManager;
+    await routeRequests(queuedUpdateServer(["a"]), () =>
+      processTitlesForUpdates(counting, updateCutoff),
+    );
+    expect(reads).to.equal(1);
   });
 
   await suite.run();

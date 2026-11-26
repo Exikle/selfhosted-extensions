@@ -2,7 +2,7 @@
 /* Copyright © 2026 Exikle */
 
 import { komgaFetch } from "../../services/network";
-import { isHiddenSeries } from "./filters";
+import { anyOfSeriesId, isHiddenSeries } from "./filters";
 import type { BookDto, Page, SeriesDto } from "./models";
 import { getIncludeOneshots } from "./state";
 
@@ -17,9 +17,7 @@ export async function resolveBookSeries(
     method: "POST",
     query: { unpaged: true },
     body: {
-      condition: {
-        anyOf: seriesIds.map((id) => ({ seriesId: { operator: "is", value: id } })),
-      },
+      condition: anyOfSeriesId(seriesIds),
     },
   });
   const seriesById = new Map((lookup.content ?? []).map((s) => [s.id, s]));

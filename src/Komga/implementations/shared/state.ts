@@ -59,9 +59,17 @@ export const getSectionStyle = (id: string): SectionStyle => {
 export const setSectionStyle = (id: string, style: SectionStyle): void =>
   setKey(`sectionStyle.${id}`, style);
 
-// A read list is off until the user turns it on; unknown ids stay hidden.
-export const getReadListEnabled = (id: string): boolean => getKey(`readList.${id}`, false);
-export const setReadListEnabled = (id: string, on: boolean): void => setKey(`readList.${id}`, on);
+// A read list is off until the user turns it on; unknown ids stay hidden. The enabled ids live in
+// one array so Home can skip the read list fetch when it is empty. The old per-id keys are still read.
+export const getEnabledReadLists = (): string[] => getStringArray("enabledReadLists", []);
+export const getReadListEnabled = (id: string): boolean =>
+  getEnabledReadLists().includes(id) || getKey(`readList.${id}`, false);
+export const setReadListEnabled = (id: string, on: boolean): void => {
+  const ids = getEnabledReadLists().filter((existing) => existing !== id);
+  setKey("enabledReadLists", on ? [...ids, id] : ids);
+  // An old per-id key would otherwise keep a switched-off list on.
+  if (getKey(`readList.${id}`, false)) setKey(`readList.${id}`, false);
+};
 
 export const getSelectedLibraries = (): string[] => getStringArray("selectedLibraries", []);
 export const setSelectedLibraries = (v: string[]): void => setKey("selectedLibraries", v);

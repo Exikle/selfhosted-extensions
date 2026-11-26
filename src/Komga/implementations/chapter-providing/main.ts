@@ -4,6 +4,7 @@
 import type { Chapter, ChapterDetails, SourceManga, UpdateManager } from "@paperback/types";
 
 import { komgaFetch, pageUrl } from "../../services/network";
+import { anyOfSeriesId, liveBookConditions } from "../shared/filters";
 import { PAGE_SIZE, type BookDto, type Page, type PageDto, type SeriesDto } from "../shared/models";
 import { decideUpdatePriorities, groupNewBooks, toChapter } from "./parsers";
 
@@ -19,8 +20,7 @@ export async function getChapters(sourceManga: SourceManga): Promise<Chapter[]> 
       condition: {
         allOf: [
           { seriesId: { operator: "is", value: sourceManga.mangaId } },
-          { deleted: { operator: "isFalse" } },
-          { mediaStatus: { operator: "is", value: "READY" } },
+          ...liveBookConditions(),
         ],
       },
     },
@@ -43,7 +43,8 @@ export async function processTitlesForUpdates(
   lastUpdateDate?: Date,
 ): Promise<void> {
   try {
-    const queued = updateManager.getQueuedItems().map((manga) => manga.mangaId);
+    const queuedItems = updateManager.getQueuedItems();
+    const queued = queuedItems.map((manga) => manga.mangaId);
     if (queued.length === 0 || !lastUpdateDate) return;
 
     const cutoff = lastUpdateDate.getTime() - UPDATE_CUTOFF_MARGIN_MS;
@@ -65,8 +66,11 @@ export async function processTitlesForUpdates(
     }
 
     const priorities = decideUpdatePriorities(queued, updated, complete);
-    const queuedItems = updateManager.getQueuedItems();
-    const newBooks = await fetchNewBooks([...updated], cutoff);
+    // Only the queued titles need their books; the server may have updated many more.
+    const newBooks = await fetchNewBooks(
+      queued.filter((id) => updated.has(id)),
+      cutoff,
+    );
 
     for (const manga of queuedItems) {
       const id = manga.mangaId;
@@ -117,11 +121,7 @@ async function fetchNewBooks(
         query: { sort: "created,desc", size: PAGE_SIZE, page },
         body: {
           condition: {
-            allOf: [
-              { anyOf: seriesIds.map((id) => ({ seriesId: { operator: "is", value: id } })) },
-              { deleted: { operator: "isFalse" } },
-              { mediaStatus: { operator: "is", value: "READY" } },
-            ],
+            allOf: [anyOfSeriesId(seriesIds), ...liveBookConditions()],
           },
         },
       });

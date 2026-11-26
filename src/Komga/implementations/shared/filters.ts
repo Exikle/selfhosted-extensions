@@ -37,3 +37,13 @@ export const isHiddenSeries = (genres: string[]): boolean => {
   const hidden = getAdultGenres();
   return genres.some((genre) => hidden.includes(genre.toLowerCase()));
 };
+
+// Books that are still on the server and readable.
+export const liveBookConditions = (): object[] => [
+  { deleted: { operator: "isFalse" } },
+  { mediaStatus: { operator: "is", value: "READY" } },
+];
+
+export const anyOfSeriesId = (ids: string[]): object => ({
+  anyOf: ids.map((id) => ({ seriesId: { operator: "is", value: id } })),
+});

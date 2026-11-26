@@ -14,6 +14,7 @@ import { parseContentRating } from "../shared/content-rating";
 import {
   hiddenGenreConditions,
   isHiddenSeries,
+  liveBookConditions,
   scopeConditions,
   scopeQuery,
 } from "../shared/filters";
@@ -26,13 +27,14 @@ import {
   type SeriesDto,
 } from "../shared/models";
 import {
+  getEnabledReadLists,
   getIncludeOneshots,
   getReadListEnabled,
   getSectionStyle,
   getSelectedLibraries,
   type SectionStyle,
 } from "../shared/state";
-import { capitalise, encodeTagId, errorMessage } from "../shared/utils";
+import { capitalise, encodeTagId, errorMessage, rowsOf } from "../shared/utils";
 import { chapterUpdateItem, onDeckItem, seriesItem, sortNearlyFinished } from "./items";
 import { DISCOVER_SECTIONS } from "./sections";
 
@@ -51,14 +53,18 @@ const FIXED_TYPES: Record<string, DiscoverSectionType> = {
 
 const READ_LIST_PREFIX = "readList:";
 
-// Komga answers an unpaged list as a page; accept a bare array too. A failed load is no read lists.
+// Throws when the request fails, so a caller can tell "none" from "could not load".
+export async function fetchReadLists(): Promise<ReadListDto[]> {
+  const response = await komgaFetch<Page<ReadListDto> | ReadListDto[]>("/api/v1/readlists", {
+    query: { unpaged: true },
+  });
+  return rowsOf(response).filter((r) => typeof r?.id === "string" && typeof r?.name === "string");
+}
+
+// A failed load is no read lists.
 export async function loadReadLists(): Promise<ReadListDto[]> {
   try {
-    const response = await komgaFetch<Page<ReadListDto> | ReadListDto[]>("/api/v1/readlists", {
-      query: { unpaged: true },
-    });
-    const rows = Array.isArray(response) ? response : (response?.content ?? []);
-    return rows.filter((r) => typeof r?.id === "string" && typeof r?.name === "string");
+    return await fetchReadLists();
   } catch (err) {
     console.log(`[Komga] Could not load read lists: ${errorMessage(err)}`);
     return [];
@@ -77,6 +83,8 @@ export async function getDiscoverSections(): Promise<DiscoverSection[]> {
       type: fixedStyle ? (FIXED_TYPES[id] ?? DiscoverSectionType.genres) : STYLE_TYPES[style],
     });
   }
+  // Nothing enabled means nothing to look up, so Home never waits on the read list request.
+  if (getEnabledReadLists().length === 0) return sections;
   // A read list deleted on the server is missing here, so its section simply goes away.
   for (const { id, name } of await loadReadLists()) {
     if (!getReadListEnabled(id)) continue;
@@ -134,11 +142,7 @@ async function latestChapterItems(page: number): Promise<PagedResults<DiscoverSe
     query: { page, size: PAGE_SIZE, sort: "created,desc" },
     body: {
       condition: {
-        allOf: [
-          { deleted: { operator: "isFalse" } },
-          { mediaStatus: { operator: "is", value: "READY" } },
-          ...scopeConditions(),
-        ],
+        allOf: [...liveBookConditions(), ...scopeConditions()],
       },
     },
   });
@@ -154,7 +158,15 @@ async function readListItems(
 ): Promise<PagedResults<DiscoverSectionItem>> {
   const result = await komgaFetch<Page<BookDto>>(
     `/api/v1/readlists/${encodeURIComponent(readListId)}/books`,
-    { query: { page, size: PAGE_SIZE, ...scopeQuery() } },
+    {
+      query: {
+        page,
+        size: PAGE_SIZE,
+        deleted: false,
+        media_status: "READY",
+        ...scopeQuery(),
+      },
+    },
   );
   const books = result.content ?? [];
   const { visible, seriesById } = await resolveBookSeries(books);
@@ -235,14 +247,16 @@ async function collectionItems(): Promise<PagedResults<DiscoverSectionItem>> {
   const result = await komgaFetch<Page<CollectionDto> | CollectionDto[]>("/api/v1/collections", {
     query: { unpaged: true, library_id: getSelectedLibraries() },
   });
-  const rows = Array.isArray(result) ? result : (result?.content ?? []);
-  // A tap searches this collection; Best Match with one collection sorts in collection order.
-  const items: DiscoverSectionItem[] = rows.map((c) => ({
+  // A tap searches this collection. An ordered one is flagged so Best Match uses its own order.
+  const items: DiscoverSectionItem[] = rowsOf(result).map((c) => ({
     type: "genresCarouselItem",
     name: c.name,
     searchQuery: {
       title: "",
-      metadata: { filters: { collections: { [encodeTagId("collection", c.id)]: "included" } } },
+      metadata: {
+        filters: { collections: { [encodeTagId("collection", c.id)]: "included" } },
+        ...(c.ordered === true ? { collectionOrdered: true } : {}),
+      },
     },
   }));
   return { items };

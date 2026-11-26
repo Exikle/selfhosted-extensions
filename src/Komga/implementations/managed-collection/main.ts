@@ -11,17 +11,18 @@ import type {
 import { komgaFetch } from "../../services/network";
 import { toSourceManga } from "../manga/parsers";
 import type { CollectionDto, Page, SeriesDto, UserDto } from "../shared/models";
-import { errorMessage } from "../shared/utils";
+import { errorMessage, mapPool, rowsOf } from "../shared/utils";
 
 const NOT_ADMIN = "Changing Komga collections needs an admin account";
 const WOULD_BE_EMPTY = "Komga collections can't be empty";
 const MALFORMED = "Komga returned an unexpected collection";
 const HIDDEN_SERIES = "This collection has series your account can't see";
 
-// Komga answers an unpaged list as a page; accept a bare array too.
-const rowsOf = <T>(response: Page<T> | T[] | undefined): T[] =>
-  Array.isArray(response) ? response : (response?.content ?? []);
+const MAX_PARALLEL_READS = 5;
 
+// These two reads throw on failure: an empty answer would read as "every series was removed".
+// They deliberately skip Hide Adult Content and library scope too, since a filtered-out series
+// would look like a removal.
 export async function getManagedCollections(): Promise<ManagedCollection[]> {
   try {
     const response = await komgaFetch<Page<CollectionDto> | CollectionDto[]>(
@@ -30,16 +31,17 @@ export async function getManagedCollections(): Promise<ManagedCollection[]> {
     );
     return rowsOf(response).map((collection) => ({ id: collection.id, title: collection.name }));
   } catch (error) {
-    console.log(`[Komga] Could not load collections: ${errorMessage(error)}`);
-    return [];
+    throw new Error(`Could not load Komga collections: ${errorMessage(error)}`);
   }
 }
 
 export async function getManagedCollectionItems(
   collections: ManagedCollection[],
 ): Promise<ManagedCollectionItems[]> {
-  return Promise.all(
-    collections.map(async (collection): Promise<ManagedCollectionItems> => {
+  return mapPool(
+    collections,
+    MAX_PARALLEL_READS,
+    async (collection): Promise<ManagedCollectionItems> => {
       try {
         const response = await komgaFetch<Page<SeriesDto> | SeriesDto[]>(
           `/api/v1/collections/${collection.id}/series`,
@@ -47,10 +49,9 @@ export async function getManagedCollectionItems(
         );
         return { collectionId: collection.id, items: rowsOf(response).map(toSourceManga) };
       } catch (error) {
-        console.log(`[Komga] Could not load collection ${collection.id}: ${errorMessage(error)}`);
-        return { collectionId: collection.id, items: [] };
+        throw new Error(`Could not load Komga collection ${collection.id}: ${errorMessage(error)}`);
       }
-    }),
+    },
   );
 }
 
@@ -98,6 +99,8 @@ export async function applyManagedCollectionChanges(
   if (!admin) throw new Error(`Komga collection update failed: ${NOT_ADMIN}`);
 
   const failed = new Map<string, string>();
+  // Changes with a write that already reached Komga; a later failure cannot undo it.
+  const landed = new Set<string>();
   const fail = (changeId: string, reason: string) => {
     if (!failed.has(changeId)) failed.set(changeId, reason);
   };
@@ -151,6 +154,7 @@ export async function applyManagedCollectionChanges(
 
       try {
         await komgaFetch<undefined>(path, { method: "PATCH", body: { seriesIds } });
+        for (const edit of applied) landed.add(edit.changeId);
       } catch (error) {
         for (const edit of applied) fail(edit.changeId, errorMessage(error));
       }
@@ -165,7 +169,7 @@ export async function applyManagedCollectionChanges(
   const failures = changes.flatMap((change) =>
     failed.has(change.id) ? [{ changeId: change.id, reason: failed.get(change.id)! }] : [],
   );
-  if (failures.length === changes.length) {
+  if (failures.length === changes.length && landed.size === 0) {
     throw new Error(`Komga collection update failed: ${failures[0]!.reason}`);
   }
   return failures;

@@ -10,7 +10,7 @@ import {
   type FormSectionElement,
 } from "@paperback/types";
 
-import { loadReadLists } from "../../discover-section/main";
+import { fetchReadLists } from "../../discover-section/main";
 import { DISCOVER_SECTIONS } from "../../discover-section/sections";
 import type { ReadListDto } from "../../shared/models";
 import {
@@ -28,12 +28,19 @@ const STYLE_ITEMS: { id: SectionStyle; title: string }[] = [
   { id: "hidden", title: "Hidden" },
 ];
 
+const READ_LIST_STATUS = {
+  loading: "Loading…",
+  ready: "No read lists",
+  failed: "Could not load read lists",
+} as const;
+
 const isStyle = (value: string | undefined): value is SectionStyle =>
   STYLE_ITEMS.some((item) => item.id === value);
 
 export class KomgaHomepageForm extends Form {
   // Row ids are built by index; this keeps the read list behind each one.
   private readLists: ReadListDto[] = [];
+  private readListsState: "loading" | "ready" | "failed" = "loading";
 
   constructor() {
     super();
@@ -79,7 +86,7 @@ export class KomgaHomepageForm extends Form {
       Section(
         { id: "read_lists", header: "Read Lists" },
         this.readLists.length === 0
-          ? [LabelRow("read_lists_none", { title: "No read lists" })]
+          ? [LabelRow("read_lists_status", { title: READ_LIST_STATUS[this.readListsState] })]
           : this.readLists.map(({ id, name }, index) =>
               ToggleRow(`read_list_${index}`, {
                 title: name,
@@ -95,7 +102,13 @@ export class KomgaHomepageForm extends Form {
   }
 
   override async formWillAppear(): Promise<void> {
-    this.readLists = await loadReadLists();
+    try {
+      this.readLists = await fetchReadLists();
+      this.readListsState = "ready";
+    } catch {
+      this.readLists = [];
+      this.readListsState = "failed";
+    }
     this.readLists.forEach(({ id }, index) => {
       (this as Record<string, unknown>)[`handleReadList_${index}`] = async (
         on: boolean,

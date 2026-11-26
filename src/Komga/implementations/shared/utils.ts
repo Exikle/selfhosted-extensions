@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright © 2026 Exikle */
 
+import type { Page } from "./models";
+
 export type TagKind =
   | "genre"
   | "tag"
@@ -30,6 +32,35 @@ export function decodeTagId(id: string): { kind: string; value: string } | undef
 
 export const errorMessage = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
+
+// Komga answers an unpaged list as a page; accept a bare array too.
+export const rowsOf = <T>(response: Page<T> | T[] | undefined): T[] =>
+  Array.isArray(response) ? response : (response?.content ?? []);
+
+// Runs fn over items with at most `limit` calls in flight. Results keep the input order.
+// The first failure stops new calls from starting and is rethrown.
+export async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  let next = 0;
+  let failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < items.length) {
+      const index = next++;
+      try {
+        results[index] = await fn(items[index]!);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 export const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 

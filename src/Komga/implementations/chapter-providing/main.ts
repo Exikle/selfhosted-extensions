@@ -5,9 +5,10 @@ import type { Chapter, ChapterDetails, SourceManga, UpdateManager } from "@paper
 
 import { komgaFetch, pageUrl } from "../../services/network";
 import { PAGE_SIZE, type BookDto, type Page, type PageDto, type SeriesDto } from "../shared/models";
-import { decideUpdatePriorities, toChapter } from "./parsers";
+import { decideUpdatePriorities, groupNewBooks, toChapter } from "./parsers";
 
 const MAX_UPDATE_PAGES = 50;
+const MAX_BOOK_PAGES = 10;
 const UPDATE_CUTOFF_MARGIN_MS = 60 * 60 * 1000;
 
 export async function getChapters(sourceManga: SourceManga): Promise<Chapter[]> {
@@ -63,7 +64,34 @@ export async function processTitlesForUpdates(
       if (result.last) complete = true;
     }
 
-    for (const [id, priority] of decideUpdatePriorities(queued, updated, complete)) {
+    const priorities = decideUpdatePriorities(queued, updated, complete);
+    const queuedItems = updateManager.getQueuedItems();
+    const newBooks = await fetchNewBooks([...updated], cutoff);
+
+    for (const manga of queuedItems) {
+      const id = manga.mangaId;
+      if (!updated.has(id)) continue;
+      const books = newBooks?.bySeries.get(id) ?? [];
+      if (books.length > 0) {
+        const language = manga.mangaInfo?.additionalInfo?.["language"];
+        try {
+          await updateManager.setNewChapters(
+            id,
+            books.map((book) => toChapter(book, language, manga)),
+          );
+        } catch {
+          // One title failing must not stop the rest.
+        }
+        priorities.set(id, "high");
+      } else if (newBooks?.complete) {
+        // A metadata-only edit: nothing new for the app to fetch.
+        priorities.set(id, "skip");
+      } else {
+        priorities.set(id, "high");
+      }
+    }
+
+    for (const [id, priority] of priorities) {
       try {
         await updateManager.setUpdatePriority(id, priority);
       } catch {
@@ -72,5 +100,39 @@ export async function processTitlesForUpdates(
     }
   } catch {
     // A failed check tells us nothing about what changed; every title keeps its default priority.
+  }
+}
+
+// Undefined when the books request failed.
+async function fetchNewBooks(
+  seriesIds: string[],
+  cutoff: number,
+): Promise<{ bySeries: Map<string, BookDto[]>; complete: boolean } | undefined> {
+  if (seriesIds.length === 0) return { bySeries: new Map(), complete: true };
+  const bySeries = new Map<string, BookDto[]>();
+  try {
+    for (let page = 0; page < MAX_BOOK_PAGES; page++) {
+      const result = await komgaFetch<Page<BookDto>>("/api/v1/books/list", {
+        method: "POST",
+        query: { sort: "created,desc", size: PAGE_SIZE, page },
+        body: {
+          condition: {
+            allOf: [
+              { anyOf: seriesIds.map((id) => ({ seriesId: { operator: "is", value: id } })) },
+              { deleted: { operator: "isFalse" } },
+              { mediaStatus: { operator: "is", value: "READY" } },
+            ],
+          },
+        },
+      });
+      const grouped = groupNewBooks(result.content, new Date(cutoff));
+      for (const [id, books] of grouped.bySeries) {
+        bySeries.set(id, [...(bySeries.get(id) ?? []), ...books]);
+      }
+      if (grouped.reachedCutoff || result.last) return { bySeries, complete: true };
+    }
+    return { bySeries, complete: false };
+  } catch {
+    return undefined;
   }
 }

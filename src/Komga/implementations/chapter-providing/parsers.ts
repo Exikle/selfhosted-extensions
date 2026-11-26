@@ -46,3 +46,22 @@ export function decideUpdatePriorities(
   }
   return priorities;
 }
+
+// Books arrive newest first, so the first one at or before the cutoff ends the walk.
+export function groupNewBooks(
+  books: BookDto[],
+  cutoff: Date,
+): { bySeries: Map<string, BookDto[]>; reachedCutoff: boolean } {
+  const bySeries = new Map<string, BookDto[]>();
+  const cutoffMs = cutoff.getTime();
+  for (const book of books) {
+    const created = new Date(book.created).getTime();
+    // A row without a usable date says nothing about the cutoff.
+    if (Number.isNaN(created)) continue;
+    if (created <= cutoffMs) return { bySeries, reachedCutoff: true };
+    const list = bySeries.get(book.seriesId);
+    if (list) list.push(book);
+    else bySeries.set(book.seriesId, [book]);
+  }
+  return { bySeries, reachedCutoff: false };
+}

@@ -15,6 +15,7 @@ import {
 } from "../Komga/implementations/chapter-providing/main.js";
 import {
   decideUpdatePriorities,
+  groupNewBooks,
   toChapter,
 } from "../Komga/implementations/chapter-providing/parsers.js";
 import {
@@ -768,6 +769,149 @@ export async function runTests(logger: TestLogger) {
         processTitlesForUpdates(manager, new Date("2026-06-01T11:00:00Z")),
       );
       expect(calls).to.deep.equal(["a", "b"]);
+    },
+  );
+
+  const updateServer = async (
+    booksResponse: (url: string) => string | Error,
+    run: () => Promise<void>,
+  ) => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    app.scheduleRequest = async (request: { url: string }) => {
+      let body: string;
+      if (request.url.includes("/books/list")) {
+        const response = booksResponse(request.url);
+        if (response instanceof Error) throw response;
+        body = response;
+      } else {
+        body = JSON.stringify({
+          content: [
+            { id: "a", lastModified: "2026-06-01T12:00:00Z" },
+            { id: "b", lastModified: "2026-06-01T12:00:00Z" },
+          ],
+          last: true,
+          number: 0,
+        });
+      }
+      return [{ status: 200, headers: {} }, new TextEncoder().encode(body).buffer];
+    };
+    try {
+      await run();
+    } finally {
+      app.scheduleRequest = original;
+    }
+  };
+
+  const recordingManager = (queued: string[], throwOn?: string) => {
+    const priorities: [string, string][] = [];
+    const chapters: [string, string[]][] = [];
+    const manager = {
+      getQueuedItems: () =>
+        queued.map(
+          (id) => ({ mangaId: id, mangaInfo: { additionalInfo: {} } }) as unknown as SourceManga,
+        ),
+      setUpdatePriority: async (id: string, priority: string) => {
+        priorities.push([id, priority]);
+      },
+      setNewChapters: async (id: string, list: { chapterId: string }[] | undefined) => {
+        chapters.push([id, (list ?? []).map((chapter) => chapter.chapterId)]);
+        if (id === throwOn) throw new Error("nope");
+      },
+    } as unknown as UpdateManager;
+    return { manager, priorities, chapters };
+  };
+
+  const updateCutoff = new Date("2026-06-01T11:00:00Z");
+
+  suite.test("groupNewBooks stops at the first book at or before the cutoff", async () => {
+    const cutoff = new Date("2026-06-01T00:00:00Z");
+    const result = groupNewBooks(
+      [
+        book({ id: "x1", seriesId: "a", created: "2026-06-01T00:00:02Z" }),
+        book({ id: "x2", seriesId: "a", created: "2026-06-01T00:00:01Z" }),
+        book({ id: "x3", seriesId: "a", created: "2026-05-31T23:59:59Z" }),
+      ],
+      cutoff,
+    );
+    expect(result.reachedCutoff).to.equal(true);
+    expect(result.bySeries.get("a")!.length).to.equal(2);
+  });
+
+  suite.test(
+    "processTitlesForUpdates: new book is handed over, metadata-only edit skips",
+    async () => {
+      const { manager, priorities, chapters } = recordingManager(["a", "b"]);
+      await updateServer(
+        () =>
+          JSON.stringify({
+            content: [
+              book({ id: "n1", seriesId: "a", created: "2026-06-01T12:00:00Z" }),
+              book({ id: "o1", seriesId: "b", created: "2026-05-01T00:00:00Z" }),
+            ],
+            last: false,
+            number: 0,
+          }),
+        () => processTitlesForUpdates(manager, updateCutoff),
+      );
+      expect(chapters).to.deep.equal([["a", ["n1"]]]);
+      expect(Object.fromEntries(priorities)).to.deep.equal({ a: "high", b: "skip" });
+    },
+  );
+
+  suite.test(
+    "processTitlesForUpdates: a failed books request gives high, no chapters",
+    async () => {
+      for (const failure of [new Error("boom"), "not json"]) {
+        const { manager, priorities, chapters } = recordingManager(["a", "b"]);
+        await updateServer(
+          () => failure,
+          () => processTitlesForUpdates(manager, updateCutoff),
+        );
+        expect(chapters.length).to.equal(0);
+        expect(Object.fromEntries(priorities)).to.deep.equal({ a: "high", b: "high" });
+      }
+    },
+  );
+
+  suite.test("processTitlesForUpdates: a capped book walk gives high for the rest", async () => {
+    const { manager, priorities, chapters } = recordingManager(["a", "b"]);
+    let pages = 0;
+    await updateServer(
+      () => {
+        pages++;
+        return JSON.stringify({
+          content: [book({ id: `n${pages}`, seriesId: "a", created: "2026-06-01T12:00:00Z" })],
+          last: false,
+          number: 0,
+        });
+      },
+      () => processTitlesForUpdates(manager, updateCutoff),
+    );
+    expect(pages).to.equal(10);
+    expect(chapters.length).to.equal(1);
+    expect(chapters[0]![1].length).to.equal(10);
+    expect(Object.fromEntries(priorities)).to.deep.equal({ a: "high", b: "high" });
+  });
+
+  suite.test(
+    "processTitlesForUpdates: one throwing setNewChapters does not stop the rest",
+    async () => {
+      const { manager, priorities, chapters } = recordingManager(["a", "b"], "a");
+      await updateServer(
+        () =>
+          JSON.stringify({
+            content: [
+              book({ id: "n1", seriesId: "a", created: "2026-06-01T12:00:00Z" }),
+              book({ id: "n2", seriesId: "b", created: "2026-06-01T12:00:00Z" }),
+            ],
+            last: true,
+            number: 0,
+          }),
+        () => processTitlesForUpdates(manager, updateCutoff),
+      );
+      expect(chapters.map(([id]) => id)).to.deep.equal(["a", "b"]);
+      expect(Object.fromEntries(priorities)).to.deep.equal({ a: "high", b: "high" });
     },
   );
 

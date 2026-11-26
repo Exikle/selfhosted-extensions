@@ -35,6 +35,7 @@ export class KomgaContentForm extends Form {
         }),
         SelectRow("adult_genres", {
           title: "Genres To Hide",
+          isDisabled: !getHideAdultContent(),
           value: stored.map((g) => encodeTagId("genre", g)),
           minItemCount: 0,
           maxItemCount: Math.max(genres.length, 1),

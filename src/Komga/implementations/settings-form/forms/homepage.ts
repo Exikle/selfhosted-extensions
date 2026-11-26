@@ -4,7 +4,7 @@
 import {
   Form,
   LabelRow,
-  SelectRow,
+  MenuRow,
   Section,
   ToggleRow,
   type FormSectionElement,
@@ -44,9 +44,8 @@ export class KomgaHomepageForm extends Form {
             setSectionStyle(id, on ? "simple" : "hidden");
             this.changed();
           }
-        : async (value: string[]): Promise<void> => {
-            const style = value[0];
-            if (isStyle(style)) setSectionStyle(id, style);
+        : async (itemId: string): Promise<void> => {
+            if (isStyle(itemId)) setSectionStyle(id, itemId);
             this.changed();
           };
     }
@@ -68,15 +67,12 @@ export class KomgaHomepageForm extends Form {
                 value: getSectionStyle(id) !== "hidden",
                 onValueChange: onValueChange as never,
               })
-            : SelectRow(`section_${id}`, {
+            : MenuRow(`section_${id}`, {
                 title,
                 subtitle,
-                value: [getSectionStyle(id)],
-                minItemCount: 1,
-                maxItemCount: 1,
-                layout: "list",
+                value: getSectionStyle(id),
                 items: STYLE_ITEMS,
-                onValueChange: onValueChange as never,
+                onSelect: onValueChange as never,
               });
         }),
       ),

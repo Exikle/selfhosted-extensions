@@ -70,3 +70,5 @@ export type Page<T> = { content: T[]; last: boolean; number: number };
 export type TachiyomiProgressV2 = { lastReadContinuousNumberSort: number };
 
 export type UserDto = { email?: string; roles?: string[] };
+
+export type ApiDocsDto = { info?: { version?: string } };

@@ -67,6 +67,7 @@ import { parseContentRating } from "../Komga/implementations/shared/content-rati
 import { isHiddenSeries } from "../Komga/implementations/shared/filters.js";
 import { escapeLucene } from "../Komga/implementations/shared/lucene.js";
 import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
+import { compareVersions } from "../Komga/implementations/shared/server-info.js";
 import {
   getAdultGenres,
   getApiKey,
@@ -2603,9 +2604,11 @@ export async function runTests(logger: TestLogger) {
       const homepage = new KomgaHomepageForm() as unknown as SettingsLike;
       const content = new KomgaContentForm() as unknown as SettingsLike;
       await content.formWillAppear!();
-      const ids = [root, server, homepage, content].flatMap(rowIdsOf);
+      const warned = await aboutRows("1.18.0", "k");
+      expect(rowIdsOf(warned)).to.include.members(["api_key_warning", "version_warning"]);
+      const ids = [warned, server, homepage, content].flatMap(rowIdsOf);
       expect(new Set(ids).size).to.equal(ids.length);
-      const sectionIds = [root, server, homepage, content].flatMap((f) =>
+      const sectionIds = [warned, server, homepage, content].flatMap((f) =>
         f.getSections().map((s) => s.id),
       );
       expect(new Set(sectionIds).size).to.equal(sectionIds.length);
@@ -2729,7 +2732,7 @@ export async function runTests(logger: TestLogger) {
       const form = new KomgaHomepageForm() as unknown as SettingsLike;
       expect(rowOf(form, "section_genres").type).to.equal("toggleRow");
       const count = await withInvalidateCounter(async () => {
-        await (form.handleSectionStyle_onDeck as (v: string[]) => Promise<void>)(["hero"]);
+        await (form.handleSectionStyle_onDeck as (v: string) => Promise<void>)("hero");
         await (form.handleSectionStyle_genres as (v: boolean) => Promise<void>)(false);
       });
       expect(count).to.equal(2);
@@ -2739,6 +2742,124 @@ export async function runTests(logger: TestLogger) {
       setSectionStyle("onDeck", saved);
       setSectionStyle("genres", savedGenres);
     }
+  });
+
+  suite.test("homepage shows a menu row per non-fixed section with the current style", async () => {
+    const saved = getSectionStyle("onDeck");
+    try {
+      setSectionStyle("onDeck", "large");
+      const form = new KomgaHomepageForm() as unknown as SettingsLike;
+      for (const { id, fixedStyle } of DISCOVER_SECTIONS) {
+        const row = rowOf(form, `section_${id}`);
+        if (fixedStyle) continue;
+        expect(row.type).to.equal("menuRow");
+        const params = row as unknown as {
+          title: string;
+          value: string;
+          items: { id: string; title: string }[];
+        };
+        expect(params.title).to.equal(DISCOVER_SECTIONS.find((s) => s.id === id)!.title);
+        expect(params.items.map((i) => i.title)).to.deep.equal([
+          "Regular",
+          "Large",
+          "Hero",
+          "Hidden",
+        ]);
+        expect(params.value).to.equal(getSectionStyle(id));
+      }
+      expect((rowOf(form, "section_onDeck") as { value?: string }).value).to.equal("large");
+    } finally {
+      setSectionStyle("onDeck", saved);
+    }
+  });
+
+  suite.test("compareVersions orders numerically and ignores suffixes", async () => {
+    expect(compareVersions("1.20.0", "1.20.0")).to.equal(0);
+    expect(compareVersions("1.9.0", "1.19.0")).to.be.lessThan(0);
+    expect(compareVersions("1.19.0", "1.9.0")).to.be.greaterThan(0);
+    expect(compareVersions("1.30.2-beta", "1.20.0")).to.be.greaterThan(0);
+    expect(compareVersions("1.30.2-beta", "1.30.2")).to.equal(0);
+    expect(compareVersions("1.20", "1.20.0")).to.equal(0);
+    expect(compareVersions("2.0.0", "1.99.99")).to.be.greaterThan(0);
+  });
+
+  const aboutServer =
+    (version: string | undefined) =>
+    (request: { url: string }): string => {
+      if (request.url.includes("/v3/api-docs")) {
+        return JSON.stringify(version === undefined ? {} : { info: { version } });
+      }
+      return settingsServer(request);
+    };
+
+  const withApiKey = async (key: string, run: () => Promise<void>): Promise<void> => {
+    const saved = getApiKey();
+    setApiKey(key);
+    try {
+      await run();
+    } finally {
+      setApiKey(saved);
+    }
+  };
+
+  // Sections are read while the key is still saved, then frozen for the assertions.
+  const aboutRows = async (version: string | undefined, key: string): Promise<SettingsLike> => {
+    let sections: ReturnType<SettingsLike["getSections"]> = [];
+    await withApiKey(key, async () => {
+      await routeRequests(aboutServer(version), async () => {
+        const root = new KomgaSettingsForm() as unknown as SettingsLike;
+        await root.formWillAppear!();
+        sections = root.getSections();
+      });
+    });
+    return { getSections: () => sections };
+  };
+
+  suite.test("about shows the extension version and Checking before the lookup", async () => {
+    const root = new KomgaSettingsForm() as unknown as SettingsLike;
+    expect(rowOf(root, "extension_version").value).to.equal(sourceInfo.version);
+    expect(rowOf(root, "komga_version").value).to.equal("Checking…");
+  });
+
+  suite.test("about shows the Komga version, using the public api docs", async () => {
+    let root!: SettingsLike;
+    const { requests } = await routeRequests(aboutServer("1.30.2-beta"), async () => {
+      root = new KomgaSettingsForm() as unknown as SettingsLike;
+      await root.formWillAppear!();
+    });
+    expect(rowOf(root, "komga_version").value).to.equal("1.30.2-beta");
+    expect(requests.some((r) => r.url.endsWith("/v3/api-docs"))).to.equal(true);
+  });
+
+  suite.test("about shows Unknown on a 403, a 500 and a missing version", async () => {
+    for (const status of [403, 500]) {
+      const root = new KomgaSettingsForm() as unknown as SettingsLike;
+      await withResponse(status, "", () => root.formWillAppear!());
+      expect(rowOf(root, "komga_version").value).to.equal("Unknown");
+    }
+    const none = await aboutRows(undefined, "");
+    expect(rowOf(none, "komga_version").value).to.equal("Unknown");
+    expect(rowsOf(none).some((r) => String(r.id).endsWith("_warning"))).to.equal(false);
+  });
+
+  suite.test("about warns about API keys only with a key on a server below 1.20", async () => {
+    const old = await aboutRows("1.19.3", "k");
+    expect(rowOf(old, "api_key_warning").title).to.equal("API keys need Komga 1.20 or later");
+    expect(rowOf(old, "version_warning")).to.equal(undefined);
+    const current = await aboutRows("1.20.0", "k");
+    expect(rowOf(current, "api_key_warning")).to.equal(undefined);
+    const noKey = await aboutRows("1.19.3", "");
+    expect(rowOf(noKey, "api_key_warning")).to.equal(undefined);
+  });
+
+  suite.test("about warns when Komga is older than 1.19", async () => {
+    const root = await aboutRows("1.18.0", "");
+    expect(rowOf(root, "version_warning").title).to.equal(
+      "This extension needs Komga 1.19 or later",
+    );
+    expect(rowOf(root, "api_key_warning")).to.equal(undefined);
+    const fine = await aboutRows("1.19.0", "");
+    expect(rowOf(fine, "version_warning")).to.equal(undefined);
   });
 
   suite.test("content form lists server genres and libraries and saves changes", async () => {
@@ -2771,6 +2892,21 @@ export async function runTests(logger: TestLogger) {
       expect(getAdultGenres()).to.deep.equal(["ecchi"]);
       expect(getSelectedLibraries()).to.deep.equal(["l1"]);
       expect(getIncludeOneshots()).to.equal(false);
+    });
+  });
+
+  suite.test("genres to hide is greyed out while hide adult content is off", async () => {
+    await withSearchState(async () => {
+      const form = new KomgaContentForm() as unknown as SettingsLike;
+      setHideAdultContent(false);
+      expect(rowOf(form, "adult_genres")).to.not.equal(undefined);
+      expect((selectParams(form, "adult_genres") as { isDisabled?: boolean }).isDisabled).to.equal(
+        true,
+      );
+      await (form.handleHideAdult as (v: boolean) => Promise<void>)(true);
+      expect((selectParams(form, "adult_genres") as { isDisabled?: boolean }).isDisabled).to.equal(
+        false,
+      );
     });
   });
 

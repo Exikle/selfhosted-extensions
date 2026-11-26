@@ -4,7 +4,7 @@
 import { URL } from "@paperback/types";
 
 import { getBaseUrl } from "../implementations/shared/state";
-import { basicAuthHeader } from "../implementations/shared/utils";
+import { basicAuthHeader, normaliseBaseUrl } from "../implementations/shared/utils";
 
 export class KomgaHttpError extends Error {
   constructor(
@@ -46,7 +46,7 @@ export const buildUrl = (
 };
 
 export async function komgaFetch<T>(path: string, opts: KomgaFetchOptions = {}): Promise<T> {
-  const base = opts.baseUrl ?? getBaseUrl();
+  const base = normaliseBaseUrl(opts.baseUrl ?? getBaseUrl());
   if (!base) throw new Error("No Komga server set");
 
   const headers: Record<string, string> = { Accept: "application/json" };

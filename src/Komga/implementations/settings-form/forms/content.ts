@@ -76,7 +76,9 @@ export class KomgaContentForm extends Form {
       komgaFetch<LibraryDto[]>("/api/v1/libraries").catch(() => undefined),
     ]);
     this.serverGenres = Array.isArray(genres) ? genres.filter((g) => typeof g === "string") : [];
-    this.libraries = Array.isArray(libraries) ? libraries : [];
+    this.libraries = Array.isArray(libraries)
+      ? libraries.filter((l) => typeof l?.id === "string" && typeof l?.name === "string")
+      : [];
     this.reloadForm();
   }
 

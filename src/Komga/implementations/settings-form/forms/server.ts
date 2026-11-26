@@ -5,7 +5,6 @@ import { ButtonRow, Form, InputRow, Section, type FormSectionElement } from "@pa
 
 import { checkConnection } from "../../shared/connection";
 import { getBaseUrl, getCredentials, setBaseUrl, setCredentials } from "../../shared/state";
-import { normaliseBaseUrl } from "../../shared/utils";
 
 export class KomgaServerForm extends Form {
   override readonly requiresExplicitSubmission = true;
@@ -53,14 +52,17 @@ export class KomgaServerForm extends Form {
 
   async handleBaseUrl(value: string): Promise<void> {
     this.baseUrl = value;
+    this.testMessage = undefined;
   }
 
   async handleUsername(value: string): Promise<void> {
     this.username = value;
+    this.testMessage = undefined;
   }
 
   async handlePassword(value: string): Promise<void> {
     this.password = value;
+    this.testMessage = undefined;
   }
 
   async handleTestConnection(): Promise<void> {
@@ -79,7 +81,7 @@ export class KomgaServerForm extends Form {
 
   // Both are passed: the interceptor would otherwise authorise with the saved credentials.
   private check() {
-    return checkConnection(normaliseBaseUrl(this.baseUrl), {
+    return checkConnection(this.baseUrl, {
       username: this.username,
       password: this.password,
     });

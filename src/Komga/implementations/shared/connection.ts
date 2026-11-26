@@ -4,6 +4,7 @@
 import { komgaFetch, KomgaHttpError } from "../../services/network";
 import type { UserDto } from "./models";
 import { getBaseUrl } from "./state";
+import { normaliseBaseUrl } from "./utils";
 
 export type ConnectionResult = { ok: boolean; message: string };
 
@@ -29,7 +30,7 @@ export async function checkConnection(
   baseUrl?: string,
   credentials?: { username: string; password: string },
 ): Promise<ConnectionResult> {
-  const base = baseUrl ?? getBaseUrl();
+  const base = normaliseBaseUrl(baseUrl ?? getBaseUrl());
   if (!base) return { ok: false, message: "No Komga server set" };
   try {
     const user = await komgaFetch<UserDto>("/api/v2/users/me", { baseUrl: base, credentials });

@@ -1519,5 +1519,20 @@ export async function runTests(logger: TestLogger) {
     });
   });
 
+  suite.test("checkConnection requests a clean URL for a trailing-slash base", async () => {
+    const { requests } = await routeRequests(settingsServer, () =>
+      checkConnection("https://x.example/", { username: "u", password: "p" }),
+    );
+    expect(requests[0]!.url).to.equal("https://x.example/api/v2/users/me");
+  });
+
+  suite.test("komgaFetch strips every trailing slash from the base", async () => {
+    const { requests } = await routeRequests(
+      () => "{}",
+      () => komgaFetch("/api/v1/x", { baseUrl: "https://x.example//" }),
+    );
+    expect(requests[0]!.url).to.equal("https://x.example/api/v1/x");
+  });
+
   await suite.run();
 }

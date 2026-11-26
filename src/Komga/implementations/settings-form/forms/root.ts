@@ -14,7 +14,7 @@ export class KomgaSettingsForm extends Form {
 
   override getSections(): FormSectionElement<unknown>[] {
     return [
-      Section("status", [LabelRow("status", { title: "Status", value: this.status })]),
+      Section("status_section", [LabelRow("status", { title: "Status", value: this.status })]),
       Section("settings", [
         NavigationRow("server_settings", {
           title: "Server Settings",

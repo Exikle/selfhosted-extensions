@@ -29,6 +29,12 @@ import {
 import { DISCOVER_SECTIONS } from "../Komga/implementations/discover-section/sections.js";
 import { getMangaDetails } from "../Komga/implementations/manga/main.js";
 import { pickShareUrl, toSourceManga } from "../Komga/implementations/manga/parsers.js";
+import {
+  chapterForProgress,
+  getMangaProgress,
+  getMangaProgressManagementForm,
+  processChapterReadActionQueue,
+} from "../Komga/implementations/progress/main.js";
 import { KomgaSearchForm } from "../Komga/implementations/search-results/forms.js";
 import {
   SORT_OPTIONS,
@@ -43,11 +49,13 @@ import { isHiddenSeries } from "../Komga/implementations/shared/filters.js";
 import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
 import {
   getAdultGenres,
+  getBaseUrl,
   getHideAdultContent,
   getIncludeOneshots,
   getSectionStyle,
   getSelectedLibraries,
   setAdultGenres,
+  setBaseUrl,
   setHideAdultContent,
   setIncludeOneshots,
   setSectionStyle,
@@ -1155,6 +1163,132 @@ export async function runTests(logger: TestLogger) {
       });
     },
   );
+
+  const progressChapters = (indexes: number[]) =>
+    indexes.map((n) => ({ chapterId: `c${n}`, chapNum: n, title: "", sortingIndex: n }) as never);
+
+  suite.test("chapterForProgress picks the highest index at or below the value", async () => {
+    const chapters = progressChapters([1, 2, 3]);
+    expect(chapterForProgress(chapters, 2.5)?.chapterId).to.equal("c2");
+    expect(chapterForProgress(chapters, 0)).to.equal(undefined);
+    expect(chapterForProgress(chapters, 10)?.chapterId).to.equal("c3");
+  });
+
+  const routeRequests = async <T>(
+    routes: (request: { url: string; method?: string }) => string,
+    run: () => Promise<T>,
+  ) => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    const requests: { url: string; method?: string; body?: string }[] = [];
+    app.scheduleRequest = async (request: { url: string; method?: string; body?: string }) => {
+      requests.push(request);
+      return [{ status: 200, headers: {} }, new TextEncoder().encode(routes(request)).buffer];
+    };
+    try {
+      return { result: await run(), requests };
+    } finally {
+      app.scheduleRequest = original;
+    }
+  };
+
+  const progressServer =
+    (lastRead: number) =>
+    (request: { url: string }): string => {
+      if (request.url.includes("/books/list")) {
+        const book = (id: string, n: number) =>
+          bookFixture({
+            id,
+            number: n,
+            metadata: { title: `Chapter ${n}`, number: String(n), numberSort: n },
+          } as Partial<BookDto>);
+        return JSON.stringify({
+          content: [book("b2", 2), book("b1", 1), book("b3", 3)],
+          last: true,
+          number: 0,
+        });
+      }
+      return JSON.stringify({ lastReadContinuousNumberSort: lastRead });
+    };
+
+  suite.test("getMangaProgress returns undefined when nothing is read", async () => {
+    const { result } = await routeRequests(progressServer(0), () => getMangaProgress(sourceManga));
+    expect(result).to.equal(undefined);
+  });
+
+  suite.test("getMangaProgress finds the chapter and never throws", async () => {
+    const { result } = await routeRequests(progressServer(2), () => getMangaProgress(sourceManga));
+    expect(result?.lastReadChapter.chapterId).to.equal("b2");
+    const failed = await withResponse(0, new Error("down"), () => getMangaProgress(sourceManga));
+    expect(failed).to.equal(undefined);
+  });
+
+  const withBase = async <T>(url: string, run: () => Promise<T>): Promise<T> => {
+    const saved = getBaseUrl();
+    setBaseUrl(url);
+    try {
+      return await run();
+    } finally {
+      setBaseUrl(saved);
+    }
+  };
+
+  suite.test("processChapterReadActionQueue reports every action as failed offline", async () => {
+    const actions = [
+      { id: "a1", chapterId: "b1" },
+      { id: "a2", chapterId: "b2" },
+    ] as never;
+    const result = await withBase("http://127.0.0.1:9", () =>
+      processChapterReadActionQueue(actions),
+    );
+    expect(result.successfulItems).to.deep.equal([]);
+    expect(result.failedItems).to.deep.equal(["a1", "a2"]);
+  });
+
+  suite.test("processChapterReadActionQueue patches each book as completed", async () => {
+    const actions = [
+      { id: "a1", chapterId: "b1" },
+      { id: "a2", chapterId: "b2" },
+    ] as never;
+    const { result, requests } = await routeRequests(
+      () => "",
+      () => processChapterReadActionQueue(actions),
+    );
+    expect(result.successfulItems).to.deep.equal(["a1", "a2"]);
+    expect(requests[0]!.method).to.equal("PATCH");
+    expect(requests[0]!.url).to.contain("/api/v1/books/b1/read-progress");
+    expect(JSON.parse(requests[0]!.body!)).to.deep.equal({ completed: true });
+  });
+
+  suite.test("progress form submit sends the chosen chapter's sort value", async () => {
+    const { requests } = await routeRequests(progressServer(0), async () => {
+      const form = (await getMangaProgressManagementForm(sourceManga)) as unknown as {
+        requiresExplicitSubmission: boolean;
+        handleSelect(value: string[]): Promise<void>;
+        formDidSubmit(): Promise<void>;
+      };
+      expect(form.requiresExplicitSubmission).to.equal(true);
+      await form.handleSelect(["b2"]);
+      await form.formDidSubmit();
+    });
+    const put = requests.find((r) => r.method === "PUT")!;
+    expect(put.url).to.contain("/api/v2/series/s1/read-progress/tachiyomi");
+    expect(JSON.parse(put.body!)).to.deep.equal({ lastBookNumberSortRead: 2 });
+  });
+
+  suite.test("progress form submit with No chapters read deletes the progress", async () => {
+    const { requests } = await routeRequests(progressServer(2), async () => {
+      const form = (await getMangaProgressManagementForm(sourceManga)) as unknown as {
+        handleSelect(value: string[]): Promise<void>;
+        formDidSubmit(): Promise<void>;
+      };
+      await form.handleSelect(["unread"]);
+      await form.formDidSubmit();
+    });
+    const del = requests.find((r) => r.method === "DELETE")!;
+    expect(del.url).to.contain("/api/v1/series/s1/read-progress");
+    expect(requests.some((r) => r.method === "PUT")).to.equal(false);
+  });
 
   await suite.run();
 }

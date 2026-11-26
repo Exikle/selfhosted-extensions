@@ -14,6 +14,11 @@ import {
 } from "./implementations/discover-section/main";
 import { getMangaDetails } from "./implementations/manga/main";
 import {
+  getMangaProgress,
+  getMangaProgressManagementForm,
+  processChapterReadActionQueue,
+} from "./implementations/progress/main";
+import {
   getAdvancedSearchForm,
   getSearchResults,
   getSortingOptions,
@@ -34,6 +39,9 @@ export class KomgaExtension implements Partial<ExtensionImpl<typeof KomgaConfig>
   getSearchResults = getSearchResults;
   getSortingOptions = getSortingOptions;
   getAdvancedSearchForm = getAdvancedSearchForm;
+  getMangaProgress = getMangaProgress;
+  getMangaProgressManagementForm = getMangaProgressManagementForm;
+  processChapterReadActionQueue = processChapterReadActionQueue;
 
   async initialise(): Promise<void> {
     this.mainRequestInterceptor.registerInterceptor();

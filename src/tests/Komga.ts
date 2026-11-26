@@ -44,17 +44,26 @@ import {
   getSearchResults,
   getSortingOptions,
 } from "../Komga/implementations/search-results/main.js";
+import { KomgaContentForm } from "../Komga/implementations/settings-form/forms/content.js";
+import { KomgaHomepageForm } from "../Komga/implementations/settings-form/forms/homepage.js";
+import { KomgaSettingsForm } from "../Komga/implementations/settings-form/forms/root.js";
+import { KomgaServerForm } from "../Komga/implementations/settings-form/forms/server.js";
+import { getSettingsForm } from "../Komga/implementations/settings-form/main.js";
 import { checkConnection, classifyConnection } from "../Komga/implementations/shared/connection.js";
 import { parseContentRating } from "../Komga/implementations/shared/content-rating.js";
 import { isHiddenSeries } from "../Komga/implementations/shared/filters.js";
 import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
 import {
   getAdultGenres,
+  getBaseUrl,
+  getCredentials,
   getHideAdultContent,
   getIncludeOneshots,
   getSectionStyle,
   getSelectedLibraries,
   setAdultGenres,
+  setBaseUrl,
+  setCredentials,
   setHideAdultContent,
   setIncludeOneshots,
   setSectionStyle,
@@ -68,13 +77,15 @@ import {
   encodeTagId,
   normaliseBaseUrl,
 } from "../Komga/implementations/shared/utils.js";
+import { Komga } from "../Komga/main.js";
+import sourceInfo from "../Komga/pbconfig.js";
 import { KomgaInterceptor, shouldAuthorise } from "../Komga/services/interceptor.js";
 import { buildUrl, komgaFetch, pageUrl } from "../Komga/services/network.js";
-import { TestSuite } from "./suite.js";
+import { TestSuite, registerDefaultTests } from "./suite.js";
 
 export async function runTests(logger: TestLogger) {
   const suite = new TestSuite("Komga tests", logger);
-  // Task 11 restores registerDefaultTests once every declared capability exists.
+  registerDefaultTests(suite, Komga, sourceInfo);
 
   suite.test("normaliseBaseUrl trims and strips trailing slashes", async () => {
     expect(normaliseBaseUrl(" https://k.example/ ")).to.equal("https://k.example");
@@ -1335,6 +1346,177 @@ export async function runTests(logger: TestLogger) {
     const del = requests.find((r) => r.method === "DELETE")!;
     expect(del.url).to.contain("/api/v1/series/s1/read-progress");
     expect(requests.some((r) => r.method === "PUT")).to.equal(false);
+  });
+
+  type SettingsLike = {
+    getSections(): { id: string; footer?: string; items: Record<string, unknown>[] }[];
+    formWillAppear?(): Promise<void>;
+    formDidSubmit?(): Promise<void>;
+    [handler: string]: unknown;
+  };
+
+  const settingsServer = (request: { url: string }): string => {
+    if (request.url.includes("/users/me")) return '{"email":"a@b.c"}';
+    if (request.url.includes("/genres")) return '["Action","Ecchi"]';
+    if (request.url.includes("/libraries")) return '[{"id":"l1","name":"Manga"}]';
+    return "{}";
+  };
+
+  const rowsOf = (form: SettingsLike) => form.getSections().flatMap((s) => s.items);
+  const rowIdsOf = (form: SettingsLike) => rowsOf(form).map((r) => r.id as string);
+  const rowOf = (form: SettingsLike, id: string) => rowsOf(form).find((r) => r.id === id)!;
+
+  // A SelectRow is a navigation row whose form holds the real props.
+  const selectParams = (form: SettingsLike, id: string) =>
+    (rowOf(form, id).form as { params: unknown }).params;
+
+  const withInvalidateCounter = async (run: () => Promise<void>): Promise<number> => {
+    const app = Application as unknown as { invalidateDiscoverSections: () => void };
+    const original = app.invalidateDiscoverSections;
+    let count = 0;
+    app.invalidateDiscoverSections = () => {
+      count++;
+    };
+    try {
+      await run();
+    } finally {
+      app.invalidateDiscoverSections = original;
+    }
+    return count;
+  };
+
+  suite.test("settings forms use unique row ids and a secure password row", async () => {
+    await routeRequests(settingsServer, async () => {
+      const root = (await getSettingsForm()) as unknown as SettingsLike;
+      await root.formWillAppear!();
+      const server = new KomgaServerForm() as unknown as SettingsLike;
+      const homepage = new KomgaHomepageForm() as unknown as SettingsLike;
+      const content = new KomgaContentForm() as unknown as SettingsLike;
+      await content.formWillAppear!();
+      const ids = [root, server, homepage, content].flatMap(rowIdsOf);
+      expect(new Set(ids).size).to.equal(ids.length);
+      const sectionIds = [root, server, homepage, content].flatMap((f) =>
+        f.getSections().map((s) => s.id),
+      );
+      expect(new Set(sectionIds).size).to.equal(sectionIds.length);
+      expect(rowOf(server, "password").isSecureEntry).to.equal(true);
+    });
+  });
+
+  suite.test("root status reads Checking until the screen appears", async () => {
+    await routeRequests(settingsServer, async () => {
+      const root = new KomgaSettingsForm() as unknown as SettingsLike;
+      expect(rowOf(root, "status").value).to.equal("Checking…");
+      await root.formWillAppear!();
+      expect(rowOf(root, "status").value).to.equal("Connected as a@b.c");
+    });
+    const failed = new KomgaSettingsForm() as unknown as SettingsLike;
+    await withResponse(401, "", () => failed.formWillAppear!());
+    expect(rowOf(failed, "status").value).to.equal("Invalid credentials");
+  });
+
+  suite.test("server form tests the typed values without saving them", async () => {
+    const before = { url: getBaseUrl(), creds: getCredentials() };
+    const server = new KomgaServerForm() as unknown as SettingsLike;
+    const { requests } = await routeRequests(settingsServer, async () => {
+      await (server.handleBaseUrl as (v: string) => Promise<void>)("https://typed.example/");
+      await (server.handleUsername as (v: string) => Promise<void>)("typed-user");
+      await (server.handlePassword as (v: string) => Promise<void>)("typed-pass");
+      await (server.handleTestConnection as () => Promise<void>)();
+    });
+    expect(requests[0]!.url).to.contain("https://typed.example/api/v2/users/me");
+    const headers = (requests[0] as unknown as { headers: Record<string, string> }).headers;
+    expect(headers["Authorization"]).to.equal(basicAuthHeader("typed-user", "typed-pass"));
+    expect(server.getSections().some((s) => s.footer === "Connected as a@b.c")).to.equal(true);
+    expect(getBaseUrl()).to.equal(before.url);
+    expect(getCredentials()).to.deep.equal(before.creds);
+  });
+
+  suite.test("server form submit throws the check message and saves only on success", async () => {
+    const before = { url: getBaseUrl(), creds: getCredentials() };
+    try {
+      const server = new KomgaServerForm() as unknown as SettingsLike;
+      await (server.handleBaseUrl as (v: string) => Promise<void>)("https://typed.example/");
+      await (server.handleUsername as (v: string) => Promise<void>)("typed-user");
+      await (server.handlePassword as (v: string) => Promise<void>)("typed-pass");
+      expect(server.requiresExplicitSubmission).to.equal(true);
+      let message = "";
+      try {
+        await withResponse(401, "", () => server.formDidSubmit!());
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message).to.equal("Invalid credentials");
+      expect(getBaseUrl()).to.equal(before.url);
+      await routeRequests(settingsServer, () => server.formDidSubmit!());
+      expect(getBaseUrl()).to.equal("https://typed.example");
+      expect(getCredentials()).to.deep.equal({ username: "typed-user", password: "typed-pass" });
+    } finally {
+      setBaseUrl(before.url);
+      setCredentials(before.creds.username, before.creds.password);
+    }
+  });
+
+  suite.test("homepage changes save the style and invalidate discover sections", async () => {
+    const saved = getSectionStyle("onDeck");
+    const savedGenres = getSectionStyle("genres");
+    try {
+      const form = new KomgaHomepageForm() as unknown as SettingsLike;
+      expect(rowOf(form, "section_genres").type).to.equal("toggleRow");
+      const count = await withInvalidateCounter(async () => {
+        await (form.handleSectionStyle_onDeck as (v: string[]) => Promise<void>)(["hero"]);
+        await (form.handleSectionStyle_genres as (v: boolean) => Promise<void>)(false);
+      });
+      expect(count).to.equal(2);
+      expect(getSectionStyle("onDeck")).to.equal("hero");
+      expect(getSectionStyle("genres")).to.equal("hidden");
+    } finally {
+      setSectionStyle("onDeck", saved);
+      setSectionStyle("genres", savedGenres);
+    }
+  });
+
+  suite.test("content form lists server genres and libraries and saves changes", async () => {
+    await withSearchState(async () => {
+      setAdultGenres(["gore"]);
+      const form = new KomgaContentForm() as unknown as SettingsLike;
+      await routeRequests(settingsServer, () => form.formWillAppear!());
+      const genreRow = selectParams(form, "adult_genres") as {
+        items: { id: string }[];
+        value: string[];
+      };
+      expect(genreRow.items.map((i) => i.id)).to.have.members([
+        encodeTagId("genre", "action"),
+        encodeTagId("genre", "ecchi"),
+        encodeTagId("genre", "gore"),
+      ]);
+      expect(genreRow.value).to.deep.equal([encodeTagId("genre", "gore")]);
+      const libraryRow = selectParams(form, "libraries") as { items: { id: string }[] };
+      expect(libraryRow.items.map((i) => i.id)).to.deep.equal(["l1"]);
+      const count = await withInvalidateCounter(async () => {
+        await (form.handleHideAdult as (v: boolean) => Promise<void>)(true);
+        await (form.handleAdultGenres as (v: string[]) => Promise<void>)([
+          encodeTagId("genre", "ecchi"),
+        ]);
+        await (form.handleLibraries as (v: string[]) => Promise<void>)(["l1"]);
+        await (form.handleIncludeOneshots as (v: boolean) => Promise<void>)(false);
+      });
+      expect(count).to.equal(4);
+      expect(getHideAdultContent()).to.equal(true);
+      expect(getAdultGenres()).to.deep.equal(["ecchi"]);
+      expect(getSelectedLibraries()).to.deep.equal(["l1"]);
+      expect(getIncludeOneshots()).to.equal(false);
+    });
+  });
+
+  suite.test("content form still opens when genres and libraries fail to load", async () => {
+    await withSearchState(async () => {
+      setAdultGenres([]);
+      const form = new KomgaContentForm() as unknown as SettingsLike;
+      await withResponse(500, "", () => form.formWillAppear!());
+      expect((selectParams(form, "adult_genres") as { items: unknown[] }).items).to.deep.equal([]);
+      expect((selectParams(form, "libraries") as { items: unknown[] }).items).to.deep.equal([]);
+    });
   });
 
   await suite.run();

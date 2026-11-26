@@ -23,11 +23,11 @@ import {
   getSearchResults,
   getSortingOptions,
 } from "./implementations/search-results/main";
+import { getSettingsForm } from "./implementations/settings-form/main";
 import type KomgaConfig from "./pbconfig";
 import { KomgaInterceptor } from "./services/interceptor";
 
-// Partial until the capability methods land; the last task drops it so tsc checks every one.
-export class KomgaExtension implements Partial<ExtensionImpl<typeof KomgaConfig>> {
+export class KomgaExtension implements ExtensionImpl<typeof KomgaConfig> {
   mainRequestInterceptor = new KomgaInterceptor("main");
 
   getMangaDetails = getMangaDetails;
@@ -39,6 +39,7 @@ export class KomgaExtension implements Partial<ExtensionImpl<typeof KomgaConfig>
   getSearchResults = getSearchResults;
   getSortingOptions = getSortingOptions;
   getAdvancedSearchForm = getAdvancedSearchForm;
+  getSettingsForm = getSettingsForm;
   getMangaProgress = getMangaProgress;
   getMangaProgressManagementForm = getMangaProgressManagementForm;
   processChapterReadActionQueue = processChapterReadActionQueue;

@@ -24,8 +24,13 @@ export class KomgaSearchForm extends AdvancedSearchForm {
   constructor(query: SearchQuery<KomgaSearchMetadata>, groups: TagSection[]) {
     super();
     const raw = query.metadata;
-    const meta: KomgaSearchMetadata = raw && !Array.isArray(raw) ? raw : {};
-    this.filters = meta.filters ??= {};
+    const meta: KomgaSearchMetadata =
+      raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    const saved: unknown = meta.filters;
+    this.filters = meta.filters =
+      saved && typeof saved === "object" && !Array.isArray(saved)
+        ? (saved as NonNullable<KomgaSearchMetadata["filters"]>)
+        : {};
     this.metadata = meta;
     this.groups = groups;
   }

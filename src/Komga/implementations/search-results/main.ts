@@ -114,7 +114,8 @@ async function loadCollections(): Promise<CollectionDto[]> {
 
 async function lookup<T>(load: () => Promise<T[]>): Promise<T[]> {
   try {
-    return (await load()) ?? [];
+    const result: unknown = await load();
+    return Array.isArray(result) ? (result as T[]) : [];
   } catch {
     return [];
   }

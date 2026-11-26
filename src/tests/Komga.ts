@@ -17,6 +17,7 @@ import {
 } from "../Komga/implementations/chapter-providing/parsers.js";
 import { getMangaDetails } from "../Komga/implementations/manga/main.js";
 import { pickShareUrl, toSourceManga } from "../Komga/implementations/manga/parsers.js";
+import { KomgaSearchForm } from "../Komga/implementations/search-results/forms.js";
 import {
   SORT_OPTIONS,
   buildSearchBody,
@@ -28,6 +29,16 @@ import { checkConnection, classifyConnection } from "../Komga/implementations/sh
 import { parseContentRating } from "../Komga/implementations/shared/content-rating.js";
 import { isHiddenSeries } from "../Komga/implementations/shared/filters.js";
 import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
+import {
+  getAdultGenres,
+  getHideAdultContent,
+  getIncludeOneshots,
+  getSelectedLibraries,
+  setAdultGenres,
+  setHideAdultContent,
+  setIncludeOneshots,
+  setSelectedLibraries,
+} from "../Komga/implementations/shared/state.js";
 import { chapterLabel, parseChapterTitle } from "../Komga/implementations/shared/titles.js";
 import {
   base64EncodeUtf8,
@@ -741,6 +752,120 @@ export async function runTests(logger: TestLogger) {
       getAdvancedSearchForm({ title: "", metadata: [] as never }),
     );
     expect(form.getSearchQueryMetadata()).to.deep.equal({ filters: {} });
+  });
+
+  const withSearchState = async <T>(run: () => Promise<T>): Promise<T> => {
+    const saved = {
+      hide: getHideAdultContent(),
+      genres: getAdultGenres(),
+      libraries: getSelectedLibraries(),
+      oneshots: getIncludeOneshots(),
+    };
+    try {
+      return await run();
+    } finally {
+      setHideAdultContent(saved.hide);
+      setAdultGenres(saved.genres);
+      setSelectedLibraries(saved.libraries);
+      setIncludeOneshots(saved.oneshots);
+    }
+  };
+
+  suite.test("isHiddenSeries hides adult genres when hiding is on", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      expect(isHiddenSeries(["Hentai"])).to.equal(true);
+      expect(isHiddenSeries(["Action"])).to.equal(false);
+      setAdultGenres(["Gore"]);
+      expect(isHiddenSeries(["gore"])).to.equal(true);
+    });
+  });
+
+  suite.test("getSearchResults adds hidden-genre and scope conditions", async () => {
+    await withSearchState(async () => {
+      setHideAdultContent(true);
+      setAdultGenres(["Hentai", "Gore"]);
+      setSelectedLibraries(["lib1", "lib2"]);
+      setIncludeOneshots(false);
+      const { requests } = await captureRequests(seriesJson(0), () =>
+        getSearchResults({ title: "" }, undefined, undefined),
+      );
+      const body = JSON.parse(requests[0]!.body!);
+      expect(body.condition.allOf).to.deep.equal([
+        { genre: { operator: "isNot", value: "hentai" } },
+        { genre: { operator: "isNot", value: "gore" } },
+        {
+          anyOf: [
+            { libraryId: { operator: "is", value: "lib1" } },
+            { libraryId: { operator: "is", value: "lib2" } },
+          ],
+        },
+        { oneShot: { operator: "isFalse" } },
+      ]);
+    });
+  });
+
+  suite.test("getSearchResults accepts array metadata", async () => {
+    const { result } = await captureRequests(seriesJson(2), () =>
+      getSearchResults({ title: "x", metadata: [] as never }, undefined, undefined),
+    );
+    expect(result.items.length).to.equal(2);
+  });
+
+  suite.test("getAdvancedSearchForm loads every collections page", async () => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    const pages: string[] = [];
+    app.scheduleRequest = async (request: { url: string }) => {
+      const url = decodeURIComponent(request.url);
+      let body = "[]";
+      if (url.includes("/api/v1/collections")) {
+        pages.push(url);
+        const second = url.includes("page=1");
+        body = JSON.stringify({
+          content: [second ? { id: "c2", name: "Two" } : { id: "c1", name: "One" }],
+          last: second,
+        });
+      }
+      return [{ status: 200, headers: {} }, new TextEncoder().encode(body).buffer];
+    };
+    try {
+      const form = await getAdvancedSearchForm({ title: "" });
+      expect(pages.length).to.equal(2);
+      const row = form.getSections().find((s) => s.id === "tags-collections")!.items[0] as {
+        form?: { props?: { items?: { id: string }[] } };
+      };
+      const ids = JSON.stringify(row);
+      expect(ids).to.contain(encodeTagId("collection", "c1"));
+      expect(ids).to.contain(encodeTagId("collection", "c2"));
+    } finally {
+      app.scheduleRequest = original;
+    }
+  });
+
+  suite.test("KomgaSearchForm keeps saved selections", async () => {
+    const id = encodeTagId("genre", "Action");
+    const form = new KomgaSearchForm(
+      { title: "", metadata: { filters: { genres: { [id]: "included" } } } },
+      [{ id: "genres", title: "Genres", tags: [{ id, title: "Action" }] }],
+    );
+    const row = form.getSections()[0]!.items[0] as unknown as { value: string };
+    expect(row.value).to.equal("1 items");
+    expect(form.getSearchQueryMetadata()).to.deep.equal({
+      filters: { genres: { [id]: "included" } },
+    });
+  });
+
+  suite.test("KomgaSearchForm tolerates non-object metadata and filters", async () => {
+    const a = new KomgaSearchForm({ title: "", metadata: "x" as never }, []);
+    expect(a.getSearchQueryMetadata()).to.deep.equal({ filters: {} });
+    const b = new KomgaSearchForm({ title: "", metadata: { filters: "x" as never } }, []);
+    expect(b.getSearchQueryMetadata()).to.deep.equal({ filters: {} });
+  });
+
+  suite.test("getAdvancedSearchForm tolerates non-array lookups", async () => {
+    const form = await withResponse(200, '{"a":1}', () => getAdvancedSearchForm({ title: "" }));
+    expect(form.getSections().length).to.equal(4);
   });
 
   await suite.run();

@@ -65,11 +65,14 @@ import {
 import { KomgaServerForm } from "../Komga/implementations/settings-form/forms/server.js";
 import { getSettingsForm } from "../Komga/implementations/settings-form/main.js";
 import { resolveBookSeries } from "../Komga/implementations/shared/book-series.js";
+import { setCacheClock } from "../Komga/implementations/shared/clock.js";
 import { checkConnection, classifyConnection } from "../Komga/implementations/shared/connection.js";
 import { parseContentRating } from "../Komga/implementations/shared/content-rating.js";
 import { isHiddenSeries } from "../Komga/implementations/shared/filters.js";
+import { clearLookupCache } from "../Komga/implementations/shared/lookups.js";
 import { escapeLucene } from "../Komga/implementations/shared/lucene.js";
 import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
+import { clearSeriesCache } from "../Komga/implementations/shared/series-cache.js";
 import { compareVersions } from "../Komga/implementations/shared/server-info.js";
 import {
   getAdultGenres,
@@ -110,6 +113,25 @@ import { TestSuite, registerDefaultTests } from "./suite.js";
 export async function runTests(logger: TestLogger) {
   const suite = new TestSuite("Komga tests", logger);
   registerDefaultTests(suite, Komga, sourceInfo);
+
+  // Every cache starts empty and is emptied again, so one test never feeds the next.
+  const resetCaches = (): void => {
+    clearSeriesCache();
+    clearLookupCache();
+    clearServerVersionCache();
+    setCacheClock();
+  };
+  const pathOf = (url: string): string => url.replace(/^https?:\/\/[^/]+/, "").split("?")[0]!;
+  const registerTest = suite.test.bind(suite);
+  suite.test = (name, fn) =>
+    registerTest(name, async () => {
+      resetCaches();
+      try {
+        await fn();
+      } finally {
+        resetCaches();
+      }
+    });
 
   suite.test("normaliseBaseUrl trims and strips trailing slashes", async () => {
     expect(normaliseBaseUrl(" https://k.example/ ")).to.equal("https://k.example");
@@ -218,7 +240,7 @@ export async function runTests(logger: TestLogger) {
   });
 
   suite.test("pageUrl converts formats the app cannot draw", async () => {
-    expect(pageUrl("b", 3, "image/avif")).to.match(/\/api\/v1\/books\/b\/pages\/3\?convert=png$/);
+    expect(pageUrl("b", 3, "image/avif")).to.match(/\/api\/v1\/books\/b\/pages\/3\?convert=jpeg$/);
     expect(pageUrl("b", 3, "image/webp")).to.match(/\/api\/v1\/books\/b\/pages\/3$/);
   });
 
@@ -671,7 +693,7 @@ export async function runTests(logger: TestLogger) {
     const urls = (details as { pages: string[] }).pages;
     expect(urls.length).to.equal(2);
     expect(urls[0]).to.match(/\/api\/v1\/books\/b1\/pages\/1$/);
-    expect(urls[1]).to.match(/\/api\/v1\/books\/b1\/pages\/2\?convert=png$/);
+    expect(urls[1]).to.match(/\/api\/v1\/books\/b1\/pages\/2\?convert=jpeg$/);
   });
 
   const fakeUpdateManager = (queued: string[]) => {
@@ -1401,35 +1423,30 @@ export async function runTests(logger: TestLogger) {
     expect(result.items.length).to.equal(2);
   });
 
-  suite.test("getAdvancedSearchForm loads every collections page", async () => {
-    const app = Application as unknown as { scheduleRequest: unknown };
-    const original = app.scheduleRequest;
-    const pages: string[] = [];
-    app.scheduleRequest = async (request: { url: string }) => {
-      const url = decodeURIComponent(request.url);
-      let body = "[]";
-      if (url.includes("/api/v1/collections")) {
-        pages.push(url);
-        const second = url.includes("page=1");
-        body = JSON.stringify({
-          content: [second ? { id: "c2", name: "Two" } : { id: "c1", name: "One" }],
-          last: second,
-        });
-      }
-      return [{ status: 200, headers: {} }, new TextEncoder().encode(body).buffer];
-    };
-    try {
-      const form = await getAdvancedSearchForm({ title: "" });
-      expect(pages.length).to.equal(2);
-      const row = form.getSections().find((s) => s.id === "tags-collections_section")!.items[0] as {
-        form?: { props?: { items?: { id: string }[] } };
-      };
-      const ids = JSON.stringify(row);
-      expect(ids).to.contain(encodeTagId("collection", "c1"));
-      expect(ids).to.contain(encodeTagId("collection", "c2"));
-    } finally {
-      app.scheduleRequest = original;
-    }
+  suite.test("getAdvancedSearchForm loads collections in one unpaged request", async () => {
+    const { requests } = await routeRequests(
+      (request) =>
+        request.url.includes("/api/v1/collections")
+          ? JSON.stringify({
+              content: [
+                { id: "c1", name: "One" },
+                { id: "c2", name: "Two" },
+              ],
+              last: true,
+            })
+          : "[]",
+      async () => {
+        const form = await getAdvancedSearchForm({ title: "" });
+        const row = form.getSections().find((s) => s.id === "tags-collections_section")!.items[0]!;
+        const ids = JSON.stringify(row);
+        expect(ids).to.contain(encodeTagId("collection", "c1"));
+        expect(ids).to.contain(encodeTagId("collection", "c2"));
+      },
+    );
+    const collections = requests.filter((r) => r.url.includes("/api/v1/collections"));
+    expect(collections.length).to.equal(1);
+    expect(collections[0]!.url).to.contain("unpaged=true");
+    expect(collections[0]!.url).to.not.contain("page=");
   });
 
   suite.test("KomgaSearchForm keeps saved selections", async () => {
@@ -1664,11 +1681,13 @@ export async function runTests(logger: TestLogger) {
     app.scheduleRequest = async (request: { url: string; body?: string }) => {
       requests.push(request);
       if (request.url.includes("/books/ondeck")) return reply(200, { content: books });
-      return reply(seriesStatus, {
-        content: series.map((s) => ({
-          id: s.id,
-          metadata: { genres: s.genres ?? [], ageRating: s.ageRating },
-        })),
+      if (seriesStatus !== 200) return reply(seriesStatus, {});
+      const id = /\/api\/v1\/series\/([^/?]+)$/.exec(request.url)?.[1];
+      const found = series.find((s) => s.id === id);
+      if (!found) return reply(404, {});
+      return reply(200, {
+        id: found.id,
+        metadata: { genres: found.genres ?? [], ageRating: found.ageRating },
       });
     };
     return {
@@ -1700,7 +1719,7 @@ export async function runTests(logger: TestLogger) {
   });
 
   suite.test(
-    "On Deck sets content rating from the series and uses one series request",
+    "On Deck sets content rating from the series and fetches each series by id",
     async () => {
       await withSearchState(async () => {
         setHideAdultContent(false);
@@ -1716,13 +1735,10 @@ export async function runTests(logger: TestLogger) {
           expect(
             result.items.map((i) => ("contentRating" in i ? i.contentRating : undefined)),
           ).to.deep.equal([ContentRating.ADULT, ContentRating.EVERYONE]);
-          expect(setup.requests.length).to.equal(2);
-          const lookup = setup.requests[1]!;
-          expect(lookup.url).to.contain("/api/v1/series/list");
-          expect(lookup.url).to.contain("unpaged=true");
-          expect(JSON.parse(lookup.body!).condition.anyOf).to.deep.equal([
-            { seriesId: { operator: "is", value: "adult" } },
-            { seriesId: { operator: "is", value: "kids" } },
+          expect(setup.requests.length).to.equal(3);
+          expect(setup.requests.slice(1).map((r) => pathOf(r.url))).to.deep.equal([
+            "/api/v1/series/adult",
+            "/api/v1/series/kids",
           ]);
         } finally {
           setup.restore();
@@ -1793,12 +1809,13 @@ export async function runTests(logger: TestLogger) {
     app.scheduleRequest = async (request: { url: string; body?: string }) => {
       requests.push(request);
       if (request.url.includes("/books/list")) return reply({ content: books });
+      const id = /\/api\/v1\/series\/([^/?]+)$/.exec(request.url)?.[1];
+      const found = series.find((s) => s.id === id);
+      if (!found) return [{ status: 404, headers: {} }, new TextEncoder().encode("").buffer];
       return reply({
-        content: series.map((s) => ({
-          id: s.id,
-          name: s.id,
-          metadata: { title: s.title, genres: s.genres ?? [], ageRating: s.ageRating },
-        })),
+        id: found.id,
+        name: found.id,
+        metadata: { title: found.title, genres: found.genres ?? [], ageRating: found.ageRating },
       });
     };
     return {
@@ -1858,30 +1875,36 @@ export async function runTests(logger: TestLogger) {
     });
   });
 
-  suite.test("Latest Chapters builds chapter update items in two requests", async () => {
-    await withSearchState(async () => {
-      setHideAdultContent(false);
-      const setup = latestSetup([latestBook()], [{ id: "s1", title: "Real Title", ageRating: 18 }]);
-      try {
-        const result = await getDiscoverSectionItems(sectionFor("latestChapters"), undefined);
-        expect(setup.requests.length).to.equal(2);
-        expect(result.items.length).to.equal(1);
-        const item = result.items[0]!;
-        expect(item.type).to.equal("chapterUpdatesCarouselItem");
-        if (item.type === "chapterUpdatesCarouselItem") {
-          expect(item.mangaId).to.equal("s1");
-          expect(item.chapterId).to.equal("b1");
-          expect(item.title).to.equal("Real Title");
-          expect(item.subtitle).to.equal("The Fall");
-          expect(item.imageUrl).to.contain("/api/v1/books/b1/thumbnail");
-          expect(item.publishDate?.toISOString()).to.equal("2026-11-01T10:00:00.000Z");
-          expect(item.contentRating).to.equal(ContentRating.ADULT);
+  suite.test(
+    "Latest Chapters builds chapter update items from the books and each series by id",
+    async () => {
+      await withSearchState(async () => {
+        setHideAdultContent(false);
+        const setup = latestSetup(
+          [latestBook()],
+          [{ id: "s1", title: "Real Title", ageRating: 18 }],
+        );
+        try {
+          const result = await getDiscoverSectionItems(sectionFor("latestChapters"), undefined);
+          expect(setup.requests.length).to.equal(2);
+          expect(result.items.length).to.equal(1);
+          const item = result.items[0]!;
+          expect(item.type).to.equal("chapterUpdatesCarouselItem");
+          if (item.type === "chapterUpdatesCarouselItem") {
+            expect(item.mangaId).to.equal("s1");
+            expect(item.chapterId).to.equal("b1");
+            expect(item.title).to.equal("Real Title");
+            expect(item.subtitle).to.equal("The Fall");
+            expect(item.imageUrl).to.contain("/api/v1/books/b1/thumbnail");
+            expect(item.publishDate?.toISOString()).to.equal("2026-11-01T10:00:00.000Z");
+            expect(item.contentRating).to.equal(ContentRating.ADULT);
+          }
+        } finally {
+          setup.restore();
         }
-      } finally {
-        setup.restore();
-      }
-    });
-  });
+      });
+    },
+  );
 
   suite.test("Latest Chapters labels an untitled book by its number", async () => {
     const item = chapterUpdateItem(
@@ -1953,14 +1976,18 @@ export async function runTests(logger: TestLogger) {
         if (!books[match[1]!]) return { status: 404 };
         return JSON.stringify({ content: books[match[1]!], last: true, number: 0 });
       }
-      if (request.url.includes("/api/v1/series/list")) {
+      const seriesId = /\/api\/v1\/series\/([^/?]+)$/.exec(request.url)?.[1];
+      if (seriesId === "s1") {
+        return JSON.stringify({ id: "s1", name: "S1", metadata: { title: "One", genres: [] } });
+      }
+      if (seriesId === "s2") {
         return JSON.stringify({
-          content: [
-            { id: "s1", name: "S1", metadata: { title: "One", genres: [] } },
-            { id: "s2", name: "S2", metadata: { title: "Two", genres: ["Hentai"] } },
-          ],
+          id: "s2",
+          name: "S2",
+          metadata: { title: "Two", genres: ["Hentai"] },
         });
       }
+      if (seriesId !== undefined) return { status: 404 };
       return "{}";
     };
 
@@ -2207,6 +2234,14 @@ export async function runTests(logger: TestLogger) {
     });
   });
 
+  const seriesById = (known: Record<string, string[]>) => (request: { url: string }) => {
+    const id = /\/api\/v1\/series\/([^/?]+)$/.exec(request.url)?.[1];
+    if (id === undefined) return "{}";
+    const genres = known[id];
+    if (genres === undefined) return { status: 404 };
+    return JSON.stringify({ id, name: id, metadata: { title: id, genres } });
+  };
+
   suite.test("resolveBookSeries pairs each visible book with its series", async () => {
     const books = [
       bookFixture({ id: "b1", seriesId: "s1" }),
@@ -2215,18 +2250,76 @@ export async function runTests(logger: TestLogger) {
     const { result } = await withSearchState(() => {
       setHideAdultContent(true);
       setAdultGenres(["hentai"]);
-      return captureRequests(
-        JSON.stringify({
-          content: [
-            { id: "s1", name: "S1", metadata: { title: "One", genres: [] } },
-            { id: "s2", name: "S2", metadata: { title: "Two", genres: ["Hentai"] } },
-          ],
-        }),
-        () => resolveBookSeries(books),
-      );
+      return routeRequests(seriesById({ s1: [], s2: ["Hentai"] }), () => resolveBookSeries(books));
     });
     expect(result.pairs.map((p) => [p.book.id, p.series.id])).to.deep.equal([["b1", "s1"]]);
     expect(result.pairs.map((p) => p.book)).to.deep.equal(result.visible);
+  });
+
+  suite.test("resolveBookSeries fetches each unique series by id, never series/list", async () => {
+    const books = [
+      bookFixture({ id: "b1", seriesId: "s1" }),
+      bookFixture({ id: "b2", seriesId: "s2" }),
+      bookFixture({ id: "b3", seriesId: "s1" }),
+    ];
+    const { result, requests } = await routeRequests(seriesById({ s1: [], s2: [] }), () =>
+      resolveBookSeries(books),
+    );
+    expect(requests.map((r) => [r.method, pathOf(r.url)])).to.deep.equal([
+      ["GET", "/api/v1/series/s1"],
+      ["GET", "/api/v1/series/s2"],
+    ]);
+    expect(requests.some((r) => r.url.includes("series/list"))).to.equal(false);
+    expect(result.visible.map((b) => b.id)).to.deep.equal(["b1", "b2", "b3"]);
+  });
+
+  suite.test("resolveBookSeries drops the books of a series that is a 404", async () => {
+    const books = [
+      bookFixture({ id: "b1", seriesId: "s1" }),
+      bookFixture({ id: "b2", seriesId: "gone" }),
+      bookFixture({ id: "b3", seriesId: "s2" }),
+    ];
+    const { result } = await routeRequests(seriesById({ s1: [], s2: [] }), () =>
+      resolveBookSeries(books),
+    );
+    expect(result.visible.map((b) => b.id)).to.deep.equal(["b1", "b3"]);
+  });
+
+  suite.test("resolveBookSeries rejects on any other error", async () => {
+    const books = [bookFixture({ id: "b1", seriesId: "s1" })];
+    let failure: unknown;
+    await withResponse(500, "", () => resolveBookSeries(books)).catch((err: unknown) => {
+      failure = err;
+    });
+    expect(failure instanceof Error).to.equal(true);
+  });
+
+  suite.test("resolveBookSeries keeps at most 6 series requests in flight", async () => {
+    const books = Array.from({ length: 15 }, (_, i) =>
+      bookFixture({ id: `b${i}`, seriesId: `s${i}` }),
+    );
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    let active = 0;
+    let peak = 0;
+    app.scheduleRequest = async (request: { url: string }) => {
+      active++;
+      peak = Math.max(peak, active);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      active--;
+      const id = request.url.split("/").pop();
+      return [
+        { status: 200, headers: {} },
+        new TextEncoder().encode(JSON.stringify({ id, name: id, metadata: { genres: [] } })).buffer,
+      ];
+    };
+    try {
+      const { visible } = await resolveBookSeries(books);
+      expect(visible.length).to.equal(15);
+      expect(peak).to.equal(6);
+    } finally {
+      app.scheduleRequest = original;
+    }
   });
 
   suite.test("resolveBookSeries sends no request for no books", async () => {
@@ -3760,6 +3853,371 @@ export async function runTests(logger: TestLogger) {
       processTitlesForUpdates(counting, updateCutoff),
     );
     expect(reads).to.equal(1);
+  });
+
+  // ---- Komga 4.1.1 speed tests ----
+
+  const seriesJsonFor = (id: string) => JSON.stringify({ ...series, id });
+
+  // Series by id answers a SeriesDto; its collections answer an empty list.
+  const titleServer = (request: { url: string }): string => {
+    const path = pathOf(request.url);
+    if (path.endsWith("/collections")) return "[]";
+    return seriesJsonFor(path.split("/").pop()!);
+  };
+  const seriesRequests = (requests: { url: string }[], id: string) =>
+    requests.filter((r) => pathOf(r.url) === `/api/v1/series/${id}`);
+
+  const fillSeriesCache = () =>
+    routeRequests(titleServer, () =>
+      resolveBookSeries([bookFixture({ id: "b1", seriesId: "s1" })]),
+    );
+
+  suite.test("a cached series skips the series request in getMangaDetails", async () => {
+    await fillSeriesCache();
+    const { requests, result } = await routeRequests(titleServer, () => getMangaDetails("s1"));
+    expect(seriesRequests(requests, "s1").length).to.equal(0);
+    // Relations still run.
+    expect(requests.some((r) => pathOf(r.url) === "/api/v1/series/s1/collections")).to.equal(true);
+    expect(result.mangaId).to.equal("s1");
+  });
+
+  suite.test("without the cache getMangaDetails fetches the series", async () => {
+    const { requests } = await routeRequests(titleServer, () => getMangaDetails("s1"));
+    expect(seriesRequests(requests, "s1").length).to.equal(1);
+  });
+
+  suite.test("a series cache entry expires after 5 minutes", async () => {
+    let now = 1_000_000;
+    setCacheClock(() => now);
+    await fillSeriesCache();
+    now += 5 * 60 * 1000 - 1;
+    const fresh = await routeRequests(titleServer, () => getMangaDetails("s1"));
+    expect(seriesRequests(fresh.requests, "s1").length).to.equal(0);
+    now += 2;
+    const stale = await routeRequests(titleServer, () => getMangaDetails("s1"));
+    expect(seriesRequests(stale.requests, "s1").length).to.equal(1);
+  });
+
+  suite.test("the series cache is per base URL", async () => {
+    const saved = getBaseUrl();
+    try {
+      await fillSeriesCache();
+      setBaseUrl("https://other.example");
+      const { requests } = await routeRequests(titleServer, () => getMangaDetails("s1"));
+      expect(seriesRequests(requests, "s1").length).to.equal(1);
+    } finally {
+      setBaseUrl(saved);
+    }
+  });
+
+  suite.test("a Content Settings change clears the series cache", async () => {
+    await withSearchState(async () => {
+      await fillSeriesCache();
+      const form = new KomgaContentForm() as unknown as SettingsLike;
+      await (form.handleIncludeOneshots as (v: boolean) => Promise<void>)(getIncludeOneshots());
+      const { requests } = await routeRequests(titleServer, () => getMangaDetails("s1"));
+      expect(seriesRequests(requests, "s1").length).to.equal(1);
+    });
+  });
+
+  suite.test("a Homepage Settings change clears the series cache", async () => {
+    const saved = getSectionStyle("onDeck");
+    try {
+      await fillSeriesCache();
+      const form = new KomgaHomepageForm() as unknown as SettingsLike;
+      await (form.handleSectionStyle_onDeck as (v: string) => Promise<void>)(saved);
+      const { requests } = await routeRequests(titleServer, () => getMangaDetails("s1"));
+      expect(seriesRequests(requests, "s1").length).to.equal(1);
+    } finally {
+      setSectionStyle("onDeck", saved);
+    }
+  });
+
+  const submitServerForm = async () => {
+    const before = { url: getBaseUrl(), creds: getCredentials(), key: getApiKey() };
+    try {
+      const server = new KomgaServerForm() as unknown as SettingsLike;
+      await routeRequests(settingsServer, () => server.formDidSubmit!());
+    } finally {
+      setBaseUrl(before.url);
+      setCredentials(before.creds.username, before.creds.password);
+      setApiKey(before.key);
+    }
+  };
+
+  suite.test("a Server Settings submit clears the series cache", async () => {
+    await fillSeriesCache();
+    await submitServerForm();
+    const { requests } = await routeRequests(titleServer, () => getMangaDetails("s1"));
+    expect(seriesRequests(requests, "s1").length).to.equal(1);
+  });
+
+  // Progress pull: one row, not the whole chapter list.
+  const oneRowServer =
+    (row: { id: string; n: number }) =>
+    (request: { url: string }): string => {
+      if (request.url.includes("/books/list")) {
+        return JSON.stringify({
+          content: [
+            bookFixture({
+              id: row.id,
+              number: row.n,
+              metadata: { title: `Chapter ${row.n}`, number: String(row.n), numberSort: row.n },
+            } as Partial<BookDto>),
+          ],
+          last: true,
+          number: 0,
+        });
+      }
+      return JSON.stringify({ lastReadContinuousNumberSort: 2.5 });
+    };
+
+  suite.test("getMangaProgress asks for one book at or below the value", async () => {
+    const { result, requests } = await routeRequests(oneRowServer({ id: "b2", n: 2 }), () =>
+      getMangaProgress(sourceManga),
+    );
+    expect(result?.lastReadChapter.chapterId).to.equal("b2");
+    expect(result?.lastReadChapter.langCode).to.equal("JA");
+    const list = requests.filter((r) => r.url.includes("/books/list"));
+    expect(list.length).to.equal(1);
+    const url = decodeURIComponent(list[0]!.url);
+    expect(list[0]!.method).to.equal("POST");
+    expect(url).to.contain("size=1");
+    expect(url).to.contain("sort=metadata.numberSort,desc");
+    expect(url).to.not.contain("unpaged");
+    expect(JSON.parse(list[0]!.body!).condition).to.deep.equal({
+      allOf: [
+        { seriesId: { operator: "is", value: "s1" } },
+        { deleted: { operator: "isFalse" } },
+        { mediaStatus: { operator: "is", value: "READY" } },
+        {
+          anyOf: [
+            { numberSort: { operator: "is", value: 2.5 } },
+            { numberSort: { operator: "lessThan", value: 2.5 } },
+          ],
+        },
+      ],
+    });
+  });
+
+  suite.test("getMangaProgress with value 0 sends no books request", async () => {
+    const { result, requests } = await routeRequests(progressServer(0), () =>
+      getMangaProgress(sourceManga),
+    );
+    expect(result).to.equal(undefined);
+    expect(requests.some((r) => r.url.includes("/books/list"))).to.equal(false);
+  });
+
+  suite.test("getMangaProgress is undefined when no book is at or below the value", async () => {
+    const { result } = await routeRequests(
+      (request) =>
+        request.url.includes("/books/list")
+          ? JSON.stringify({ content: [], last: true, number: 0 })
+          : JSON.stringify({ lastReadContinuousNumberSort: 2.5 }),
+      () => getMangaProgress(sourceManga),
+    );
+    expect(result).to.equal(undefined);
+  });
+
+  // Search filter lists.
+  const listServer = (request: { url: string }): string => {
+    if (request.url.includes("/api/v1/collections")) {
+      return JSON.stringify({ content: [{ id: "c1", name: "One" }], last: true });
+    }
+    if (request.url.includes("/api/v1/genres")) return '["Action"]';
+    if (request.url.includes("/api/v1/libraries")) return '[{"id":"l1","name":"Manga"}]';
+    return "[]";
+  };
+
+  suite.test("the second search form open makes no requests", async () => {
+    const first = await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+    expect(first.requests.length).to.equal(7);
+    const second = await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+    expect(second.requests.length).to.equal(0);
+    expect(JSON.stringify(second.result.getSections())).to.contain(encodeTagId("genre", "Action"));
+  });
+
+  suite.test("Content Settings reuses the lists the search form loaded", async () => {
+    await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+    const { requests } = await routeRequests(listServer, async () => {
+      const form = new KomgaContentForm() as unknown as SettingsLike;
+      await form.formWillAppear!();
+    });
+    expect(requests.length).to.equal(0);
+  });
+
+  suite.test("the filter lists are fetched again after 10 minutes", async () => {
+    let now = 5_000_000;
+    setCacheClock(() => now);
+    await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+    now += 10 * 60 * 1000 - 1;
+    const fresh = await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+    expect(fresh.requests.length).to.equal(0);
+    now += 2;
+    const stale = await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+    expect(stale.requests.length).to.equal(7);
+  });
+
+  suite.test("the filter lists are kept per base URL and per login", async () => {
+    const saved = { url: getBaseUrl(), creds: getCredentials(), key: getApiKey() };
+    try {
+      await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+      setBaseUrl("https://other.example");
+      const otherHost = await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+      expect(otherHost.requests.length).to.equal(7);
+      setCredentials("someone-else", "pw");
+      const otherUser = await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+      expect(otherUser.requests.length).to.equal(7);
+      setApiKey("secret-key");
+      const keyed = await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+      expect(keyed.requests.length).to.equal(7);
+      const again = await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+      expect(again.requests.length).to.equal(0);
+    } finally {
+      setBaseUrl(saved.url);
+      setCredentials(saved.creds.username, saved.creds.password);
+      setApiKey(saved.key);
+    }
+  });
+
+  suite.test("a Server Settings submit clears the filter lists", async () => {
+    await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+    await submitServerForm();
+    const { requests } = await routeRequests(listServer, () =>
+      getAdvancedSearchForm({ title: "" }),
+    );
+    expect(requests.length).to.equal(7);
+  });
+
+  suite.test("a library selection change clears the filter lists", async () => {
+    await withSearchState(async () => {
+      await routeRequests(listServer, () => getAdvancedSearchForm({ title: "" }));
+      const form = new KomgaContentForm() as unknown as SettingsLike;
+      await (form.handleLibraries as (v: string[]) => Promise<void>)(["l1"]);
+      const { requests } = await routeRequests(listServer, () =>
+        getAdvancedSearchForm({ title: "" }),
+      );
+      expect(requests.length).to.equal(7);
+    });
+  });
+
+  suite.test("a failed filter lookup is not cached", async () => {
+    await withResponse(500, "", () => getAdvancedSearchForm({ title: "" }));
+    const { requests, result } = await routeRequests(listServer, () =>
+      getAdvancedSearchForm({ title: "" }),
+    );
+    expect(requests.length).to.equal(7);
+    expect(JSON.stringify(result.getSections())).to.contain(encodeTagId("genre", "Action"));
+  });
+
+  // Progress push.
+  suite.test("processChapterReadActionQueue keeps at most 4 requests in flight", async () => {
+    const actions = Array.from({ length: 10 }, (_, i) => ({
+      id: `a${i}`,
+      chapterId: `b${i}`,
+    })) as never;
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    let active = 0;
+    let peak = 0;
+    let calls = 0;
+    app.scheduleRequest = async () => {
+      active++;
+      calls++;
+      peak = Math.max(peak, active);
+      const fail = calls === 3;
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      active--;
+      return [{ status: fail ? 500 : 200, headers: {} }, new TextEncoder().encode("").buffer];
+    };
+    try {
+      const result = await processChapterReadActionQueue(actions);
+      expect(peak).to.equal(4);
+      expect(result.successfulItems.length + result.failedItems.length).to.equal(10);
+      expect(result.failedItems.length).to.equal(1);
+      expect(new Set([...result.successfulItems, ...result.failedItems]).size).to.equal(10);
+    } finally {
+      app.scheduleRequest = original;
+    }
+  });
+
+  // Fewer state reads.
+  suite.test("komgaFetch resolves undefined for an empty body", async () => {
+    expect(await withResponse(200, "", () => komgaFetch("/api/v1/x"))).to.equal(undefined);
+    expect(await withResponse(204, "", () => komgaFetch("/api/v1/x"))).to.equal(undefined);
+  });
+
+  suite.test("getChapterDetails reads the base URL once for all pages", async () => {
+    const chapter = { chapterId: "b1", sourceManga } as never;
+    const app = Application as unknown as { getState: (key: string) => unknown };
+    const original = app.getState;
+    let reads = 0;
+    app.getState = (key: string) => {
+      if (key === "serverURL") reads++;
+      return original.call(Application, key);
+    };
+    try {
+      const pages = Array.from({ length: 20 }, (_, i) => ({
+        number: i + 1,
+        mediaType: "image/jpeg",
+      }));
+      const { result } = await routeRequests(
+        () => JSON.stringify(pages),
+        () => getChapterDetails(chapter),
+      );
+      expect(result.pages.length).to.equal(20);
+      // One read for the request, one for the page URLs.
+      expect(reads).to.be.lessThan(3);
+    } finally {
+      app.getState = original;
+    }
+  });
+
+  // Komga version kept between sessions.
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const openSettings = () =>
+    routeRequests(aboutServer("1.30.2"), async () => {
+      const root = new KomgaSettingsForm() as unknown as SettingsLike;
+      await root.formWillAppear!();
+      return rowOf(root, "komga_version").value;
+    });
+  const docsRequests = (requests: { url: string }[]) =>
+    requests.filter((r) => r.url.endsWith("/v3/api-docs")).length;
+
+  suite.test("a fresh stored Komga version means no api-docs request", async () => {
+    let now = 9_000_000;
+    setCacheClock(() => now);
+    await openSettings();
+    // A new app session has an empty in-memory map but keeps the stored value.
+    clearServerVersionCache({ keepStored: true });
+    now += DAY_MS - 1;
+    const { requests, result } = await openSettings();
+    expect(docsRequests(requests)).to.equal(0);
+    expect(result).to.equal("1.30.2");
+  });
+
+  suite.test("a stale stored Komga version is fetched again", async () => {
+    let now = 9_000_000;
+    setCacheClock(() => now);
+    await openSettings();
+    clearServerVersionCache({ keepStored: true });
+    now += DAY_MS + 1;
+    const { requests } = await openSettings();
+    expect(docsRequests(requests)).to.equal(1);
+  });
+
+  suite.test("a base URL change fetches the Komga version again", async () => {
+    const saved = getBaseUrl();
+    try {
+      await openSettings();
+      clearServerVersionCache({ keepStored: true });
+      setBaseUrl("https://other.example");
+      const { requests } = await openSettings();
+      expect(docsRequests(requests)).to.equal(1);
+    } finally {
+      setBaseUrl(saved);
+    }
   });
 
   await suite.run();

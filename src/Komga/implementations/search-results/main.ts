@@ -13,18 +13,12 @@ import type {
 import { komgaFetch, seriesThumbnail } from "../../services/network";
 import { parseContentRating } from "../shared/content-rating";
 import { hiddenGenreConditions, scopeConditions } from "../shared/filters";
+import { getLookup } from "../shared/lookups";
 import { escapeLucene } from "../shared/lucene";
-import {
-  PAGE_SIZE,
-  type CollectionDto,
-  type LibraryDto,
-  type Page,
-  type SeriesDto,
-} from "../shared/models";
+import { PAGE_SIZE, type Page, type SeriesDto } from "../shared/models";
+import { getBaseUrl } from "../shared/state";
 import { capitalise, decodeTagId, encodeTagId, errorMessage } from "../shared/utils";
 import { KomgaSearchForm, type KomgaSearchMetadata } from "./forms";
-
-const MAX_COLLECTION_PAGES = 50;
 
 // Each pairing was checked on a live server, asc and desc.
 export const SORT_OPTIONS = [
@@ -146,10 +140,11 @@ export async function getSearchResults(
         author,
       ),
     });
+    const baseUrl = getBaseUrl();
     const items: SearchResultItem[] = (result.content ?? []).map((series) => ({
       mangaId: series.id,
       title: series.metadata?.title ?? series.name,
-      imageUrl: seriesThumbnail(series.id),
+      imageUrl: seriesThumbnail(series.id, baseUrl),
       contentRating: parseContentRating(series.metadata ?? {}),
     }));
     // Every random page reshuffles, so a next page would repeat or skip series.
@@ -188,18 +183,6 @@ const SERIES_STATUSES = [
   ["ABANDONED", "Abandoned"],
 ] as const;
 
-async function loadCollections(): Promise<CollectionDto[]> {
-  const all: CollectionDto[] = [];
-  for (let page = 0; page < MAX_COLLECTION_PAGES; page++) {
-    const result = await komgaFetch<Page<CollectionDto>>("/api/v1/collections", {
-      query: { page, size: PAGE_SIZE },
-    });
-    all.push(...(result.content ?? []));
-    if (result.last || !result.content?.length) break;
-  }
-  return all;
-}
-
 async function lookup<T>(load: () => Promise<T[]>): Promise<T[]> {
   try {
     const result: unknown = await load();
@@ -214,13 +197,13 @@ export async function getAdvancedSearchForm(
 ): Promise<AdvancedSearchForm> {
   const [genres, tags, libraries, collections, publishers, languages, ageRatings] =
     await Promise.all([
-      lookup(() => komgaFetch<string[]>("/api/v1/genres")),
-      lookup(() => komgaFetch<string[]>("/api/v1/tags/series")),
-      lookup(() => komgaFetch<LibraryDto[]>("/api/v1/libraries")),
-      lookup(loadCollections),
-      lookup(() => komgaFetch<string[]>("/api/v1/publishers")),
-      lookup(() => komgaFetch<string[]>("/api/v1/languages")),
-      lookup(() => komgaFetch<string[]>("/api/v1/age-ratings")),
+      lookup(() => getLookup("genres")),
+      lookup(() => getLookup("tags")),
+      lookup(() => getLookup("libraries")),
+      lookup(() => getLookup("collections")),
+      lookup(() => getLookup("publishers")),
+      lookup(() => getLookup("languages")),
+      lookup(() => getLookup("ageRatings")),
     ]);
   const groups: TagSection[] = [
     { id: "genres", title: "Genres", tags: stringTags("genre", genres) },

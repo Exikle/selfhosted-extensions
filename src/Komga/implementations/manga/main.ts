@@ -6,6 +6,8 @@ import type { MangaInfoExtra, MangaInfoRelationSection, SourceManga } from "@pap
 import { KomgaHttpError, komgaFetch, seriesThumbnail } from "../../services/network";
 import { hiddenGenreConditions, libraryConditions } from "../shared/filters";
 import type { CollectionDto, Page, SeriesDto } from "../shared/models";
+import { getCachedSeries } from "../shared/series-cache";
+import { getBaseUrl } from "../shared/state";
 import { errorMessage } from "../shared/utils";
 import { staffSection, toSourceManga } from "./parsers";
 
@@ -13,6 +15,7 @@ const RELATION_LIMIT = 20;
 
 // Other series in each collection this series is in, in its order (title for unordered ones). Never throws.
 export async function relationSections(seriesId: string): Promise<MangaInfoRelationSection[]> {
+  const baseUrl = getBaseUrl();
   try {
     const collections = await komgaFetch<CollectionDto[]>(`/api/v1/series/${seriesId}/collections`);
     const sections = await Promise.all(
@@ -42,7 +45,7 @@ export async function relationSections(seriesId: string): Promise<MangaInfoRelat
             .slice(0, RELATION_LIMIT)
             .map((series) => ({
               id: series.id,
-              imageUrl: seriesThumbnail(series.id),
+              imageUrl: seriesThumbnail(series.id, baseUrl),
               title: series.metadata?.title ?? series.name,
             }));
           if (items.length === 0) return undefined;
@@ -69,7 +72,9 @@ export async function getMangaDetails(mangaId: string): Promise<SourceManga> {
   // The lookup only needs the id, so it runs alongside the series fetch. It never rejects.
   const relations = relationSections(mangaId);
   try {
-    const series = await komgaFetch<SeriesDto>(`/api/v1/series/${mangaId}`);
+    const series =
+      getCachedSeries(getBaseUrl(), mangaId) ??
+      (await komgaFetch<SeriesDto>(`/api/v1/series/${mangaId}`));
     const manga = toSourceManga(series);
     const staff = staffSection(series);
     const extras: MangaInfoExtra[] = [...(staff ? [staff] : []), ...(await relations)];

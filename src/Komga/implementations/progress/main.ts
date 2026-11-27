@@ -12,7 +12,10 @@ import type {
 
 import { komgaFetch } from "../../services/network";
 import { getChapters } from "../chapter-providing/main";
-import type { TachiyomiProgressV2 } from "../shared/models";
+import { toChapter } from "../chapter-providing/parsers";
+import { liveBookConditions } from "../shared/filters";
+import type { BookDto, Page, TachiyomiProgressV2 } from "../shared/models";
+import { mapPool } from "../shared/utils";
 import { KomgaProgressForm } from "./forms";
 
 // The chapter with the highest sort value at or below `value`; Komga reports progress as a sort value.
@@ -38,13 +41,44 @@ const readProgress = async (sourceManga: SourceManga): Promise<number> => {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 };
 
+const PUSHES_IN_FLIGHT = 4;
+
+// The one chapter with the highest sort value at or below `value`, so a pull never downloads the list.
+async function chapterAtProgress(
+  sourceManga: SourceManga,
+  value: number,
+): Promise<Chapter | undefined> {
+  const page = await komgaFetch<Page<BookDto>>("/api/v1/books/list", {
+    method: "POST",
+    query: { size: 1, sort: "metadata.numberSort,desc" },
+    body: {
+      condition: {
+        allOf: [
+          { seriesId: { operator: "is", value: sourceManga.mangaId } },
+          ...liveBookConditions(),
+          {
+            anyOf: [
+              { numberSort: { operator: "is", value } },
+              { numberSort: { operator: "lessThan", value } },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  const book = page.content?.[0];
+  if (book === undefined) return undefined;
+  const language = sourceManga.mangaInfo.additionalInfo?.["language"];
+  return toChapter(book, language, sourceManga);
+}
+
 export async function getMangaProgress(
   sourceManga: SourceManga,
 ): Promise<MangaProgress | undefined> {
   try {
     const value = await readProgress(sourceManga);
     if (value <= 0) return undefined;
-    const lastReadChapter = chapterForProgress(await getChapters(sourceManga), value);
+    const lastReadChapter = await chapterAtProgress(sourceManga, value);
     return lastReadChapter ? { sourceManga, lastReadChapter } : undefined;
   } catch {
     // Pull must not throw; no progress is the safe answer when Komga cannot be reached.
@@ -63,19 +97,20 @@ export async function getMangaProgressManagementForm(sourceManga: SourceManga): 
 export async function processChapterReadActionQueue(
   actions: TrackedMangaChapterReadAction[],
 ): Promise<ChapterReadActionQueueProcessingResult> {
-  const successfulItems: string[] = [];
-  const failedItems: string[] = [];
-  for (const action of actions) {
+  const outcomes = await mapPool(actions, PUSHES_IN_FLIGHT, async (action) => {
     try {
       await komgaFetch(`/api/v1/books/${action.chapterId}/read-progress`, {
         method: "PATCH",
         body: { completed: true },
       });
-      successfulItems.push(action.id);
+      return { id: action.id, ok: true };
     } catch {
       // Paperback retries failed items, so a miss here is recorded rather than thrown.
-      failedItems.push(action.id);
+      return { id: action.id, ok: false };
     }
-  }
-  return { successfulItems, failedItems };
+  });
+  return {
+    successfulItems: outcomes.filter((o) => o.ok).map((o) => o.id),
+    failedItems: outcomes.filter((o) => !o.ok).map((o) => o.id),
+  };
 }

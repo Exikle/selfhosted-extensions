@@ -69,18 +69,20 @@ export async function komgaFetch<T>(path: string, opts: KomgaFetchOptions = {}):
   };
 
   let status: number;
+  let empty: boolean;
   let text: string;
   try {
     const [response, buffer] = await Application.scheduleRequest(request);
     status = response.status;
-    text = Application.arrayBufferToUTF8String(buffer);
+    empty = buffer.byteLength === 0;
+    text = empty ? "" : Application.arrayBufferToUTF8String(buffer);
   } catch {
     // The native error can carry the full URL; keep the message to the host the user typed.
     throw new Error(`Could not reach ${base}`);
   }
 
   if (status >= 400) throw new KomgaHttpError(status, `Komga returned ${status}`);
-  if (text.trim() === "") return undefined as T;
+  if (empty) return undefined as T;
   try {
     return JSON.parse(text) as T;
   } catch {
@@ -89,15 +91,23 @@ export async function komgaFetch<T>(path: string, opts: KomgaFetchOptions = {}):
   }
 }
 
-export const seriesThumbnail = (id: string): string =>
-  `${getBaseUrl()}/api/v1/series/${id}/thumbnail`;
+// Callers that build many URLs read the base once and pass it in.
+export const seriesThumbnail = (id: string, base: string = getBaseUrl()): string =>
+  `${base}/api/v1/series/${id}/thumbnail`;
 
-export const bookThumbnail = (id: string): string => `${getBaseUrl()}/api/v1/books/${id}/thumbnail`;
+export const bookThumbnail = (id: string, base: string = getBaseUrl()): string =>
+  `${base}/api/v1/books/${id}/thumbnail`;
 
 const NATIVE_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
-// Komga converts formats the app cannot draw (avif, jxl, ...) when asked for png.
-export const pageUrl = (bookId: string, n: number, mediaType: string): string =>
-  `${getBaseUrl()}/api/v1/books/${bookId}/pages/${n}${
-    NATIVE_IMAGE_TYPES.includes(mediaType) ? "" : "?convert=png"
+// Komga converts formats the app cannot draw (avif, jxl, ...) when asked for jpeg. PNG would be
+// several times the size.
+export const pageUrl = (
+  bookId: string,
+  n: number,
+  mediaType: string,
+  base: string = getBaseUrl(),
+): string =>
+  `${base}/api/v1/books/${bookId}/pages/${n}${
+    NATIVE_IMAGE_TYPES.includes(mediaType) ? "" : "?convert=jpeg"
   }`;

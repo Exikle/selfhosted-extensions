@@ -76,3 +76,22 @@ export const setSelectedLibraries = (v: string[]): void => setKey("selectedLibra
 
 export const getIncludeOneshots = (): boolean => getKey("includeOneshots", true);
 export const setIncludeOneshots = (v: boolean): void => setKey("includeOneshots", v);
+
+// The Komga version per base URL, kept between sessions so Settings need not download the
+// OpenAPI document every time it opens.
+export type StoredServerVersion = { version: string; at: number };
+
+const getStoredServerVersions = (): Record<string, StoredServerVersion> => {
+  const value = Application.getState("serverVersions");
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, StoredServerVersion>)
+    : {};
+};
+
+export const getStoredServerVersion = (baseUrl: string): StoredServerVersion | undefined => {
+  const entry = getStoredServerVersions()[baseUrl];
+  return typeof entry?.version === "string" && typeof entry.at === "number" ? entry : undefined;
+};
+export const setStoredServerVersion = (baseUrl: string, version: string, at: number): void =>
+  setKey("serverVersions", { ...getStoredServerVersions(), [baseUrl]: { version, at } });
+export const clearStoredServerVersions = (): void => setKey("serverVersions", {});

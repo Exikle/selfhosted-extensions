@@ -4,6 +4,8 @@
 import { ButtonRow, Form, InputRow, Section, type FormSectionElement } from "@paperback/types";
 
 import { checkConnection } from "../../shared/connection";
+import { clearLookupCache } from "../../shared/lookups";
+import { clearSeriesCache } from "../../shared/series-cache";
 import {
   getApiKey,
   getBaseUrl,
@@ -112,6 +114,8 @@ export class KomgaServerForm extends Form {
     setBaseUrl(this.baseUrl);
     setCredentials(this.username, this.password);
     setApiKey(this.apiKey);
+    clearSeriesCache();
+    clearLookupCache();
     Application.invalidateDiscoverSections();
   }
 

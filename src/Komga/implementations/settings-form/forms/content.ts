@@ -3,8 +3,9 @@
 
 import { Form, Section, SelectRow, ToggleRow, type FormSectionElement } from "@paperback/types";
 
-import { komgaFetch } from "../../../services/network";
+import { clearLookupCache, getLookup } from "../../shared/lookups";
 import type { LibraryDto } from "../../shared/models";
+import { clearSeriesCache } from "../../shared/series-cache";
 import {
   getAdultGenres,
   getHideAdultContent,
@@ -73,8 +74,8 @@ export class KomgaContentForm extends Form {
   override async formWillAppear(): Promise<void> {
     // A failed load leaves the lists empty; the form still opens.
     const [genres, libraries] = await Promise.all([
-      komgaFetch<string[]>("/api/v1/genres").catch(() => undefined),
-      komgaFetch<LibraryDto[]>("/api/v1/libraries").catch(() => undefined),
+      getLookup("genres").catch(() => undefined),
+      getLookup("libraries").catch(() => undefined),
     ]);
     this.serverGenres = Array.isArray(genres) ? genres.filter((g) => typeof g === "string") : [];
     this.libraries = Array.isArray(libraries)
@@ -100,6 +101,7 @@ export class KomgaContentForm extends Form {
 
   async handleLibraries(value: string[]): Promise<void> {
     setSelectedLibraries(value);
+    clearLookupCache();
     this.changed();
   }
 
@@ -109,6 +111,7 @@ export class KomgaContentForm extends Form {
   }
 
   private changed(): void {
+    clearSeriesCache();
     Application.invalidateDiscoverSections();
     this.reloadForm();
   }

@@ -6,6 +6,7 @@ import type { Chapter, ChapterDetails, SourceManga, UpdateManager } from "@paper
 import { komgaFetch, pageUrl } from "../../services/network";
 import { anyOfSeriesId, liveBookConditions } from "../shared/filters";
 import { PAGE_SIZE, type BookDto, type Page, type PageDto, type SeriesDto } from "../shared/models";
+import { getBaseUrl } from "../shared/state";
 import { decideUpdatePriorities, groupNewBooks, toChapter } from "./parsers";
 
 const MAX_UPDATE_PAGES = 50;
@@ -31,10 +32,11 @@ export async function getChapters(sourceManga: SourceManga): Promise<Chapter[]> 
 
 export async function getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {
   const pages = await komgaFetch<PageDto[]>(`/api/v1/books/${chapter.chapterId}/pages`);
+  const baseUrl = getBaseUrl();
   return {
     id: chapter.chapterId,
     mangaId: chapter.sourceManga.mangaId,
-    pages: pages.map((page) => pageUrl(chapter.chapterId, page.number, page.mediaType)),
+    pages: pages.map((page) => pageUrl(chapter.chapterId, page.number, page.mediaType, baseUrl)),
   };
 }
 

@@ -4,6 +4,7 @@
 import { Form, LabelRow, NavigationRow, Section, type FormSectionElement } from "@paperback/types";
 
 import sourceInfo from "../../../pbconfig";
+import { cacheNow } from "../../shared/clock";
 import { checkConnection } from "../../shared/connection";
 import {
   API_KEY_SERVER_VERSION,
@@ -11,15 +12,35 @@ import {
   compareVersions,
   getServerVersion,
 } from "../../shared/server-info";
-import { getApiKey, getBaseUrl } from "../../shared/state";
+import {
+  clearStoredServerVersions,
+  getApiKey,
+  getBaseUrl,
+  getStoredServerVersion,
+  setStoredServerVersion,
+} from "../../shared/state";
 import { KomgaContentForm } from "./content";
 import { KomgaHomepageForm } from "./homepage";
 import { KomgaServerForm } from "./server";
 
-// Found versions, per base URL, for the session; a failed lookup is not kept.
+// Found versions, per base URL, for the session; a failed lookup is not kept. Behind it sits the
+// stored copy, which is trusted for a day.
 const versionCache = new Map<string, string>();
+const STORED_VERSION_TTL_MS = 24 * 60 * 60 * 1000;
 
-export const clearServerVersionCache = (): void => versionCache.clear();
+export const clearServerVersionCache = (options: { keepStored?: boolean } = {}): void => {
+  versionCache.clear();
+  if (!options.keepStored) clearStoredServerVersions();
+};
+
+const knownVersion = (baseUrl: string): string | undefined => {
+  const cached = versionCache.get(baseUrl);
+  if (cached !== undefined) return cached;
+  const stored = getStoredServerVersion(baseUrl);
+  if (stored === undefined || cacheNow() - stored.at >= STORED_VERSION_TTL_MS) return undefined;
+  versionCache.set(baseUrl, stored.version);
+  return stored.version;
+};
 
 export class KomgaSettingsForm extends Form {
   private status = "Checking…";
@@ -72,7 +93,7 @@ export class KomgaSettingsForm extends Form {
 
   override async formWillAppear(): Promise<void> {
     const baseUrl = getBaseUrl();
-    const cached = versionCache.get(baseUrl);
+    const cached = knownVersion(baseUrl);
     this.status = "Checking…";
     this.serverVersion = cached;
     this.reloadForm();
@@ -85,7 +106,10 @@ export class KomgaSettingsForm extends Form {
       cached !== undefined
         ? Promise.resolve()
         : getServerVersion().then((version) => {
-            if (version) versionCache.set(baseUrl, version);
+            if (version) {
+              versionCache.set(baseUrl, version);
+              setStoredServerVersion(baseUrl, version, cacheNow());
+            }
             this.serverVersion = version ?? "";
             this.reloadForm();
           }),

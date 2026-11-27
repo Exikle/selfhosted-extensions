@@ -13,6 +13,7 @@ import {
 import { fetchReadLists } from "../../discover-section/main";
 import { DISCOVER_SECTIONS } from "../../discover-section/sections";
 import type { ReadListDto } from "../../shared/models";
+import { clearSeriesCache } from "../../shared/series-cache";
 import {
   getReadListEnabled,
   getSectionStyle,
@@ -121,6 +122,7 @@ export class KomgaHomepageForm extends Form {
   }
 
   private changed(): void {
+    clearSeriesCache();
     Application.invalidateDiscoverSections();
     this.reloadForm();
   }

@@ -27,7 +27,7 @@ Reading
 - Chapter names are cleaned up, such as `Vol.13 Ch.074.5`.
 - Reading progress syncs both ways with Komga.
 - Webtoon series open in vertical scroll.
-- Webtoon chapter tiles on Home show the series cover.
+- Chapter tiles on Home show the series cover.
 - Title pages list Creators and "In <collection>" rows.
 - Title pages show a Publisher tag. Tap it to search.
 

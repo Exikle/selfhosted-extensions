@@ -7,7 +7,7 @@ import type {
   DiscoverSectionItem,
 } from "@paperback/types";
 
-import { bookThumbnail, seriesThumbnail } from "../../services/network";
+import { seriesThumbnail } from "../../services/network";
 import { parseChapterNumber } from "../chapter-providing/parsers";
 import { parseContentRating } from "../shared/content-rating";
 import { PAGE_SIZE, type BookDto, type SeriesDto } from "../shared/models";
@@ -58,23 +58,16 @@ export function seriesItem(
     : { type: "simpleCarouselItem", ...base };
 }
 
-// A webtoon's page 1 is a tall strip, so its chapter tiles show the series cover instead.
-const chapterCover = (book: BookDto, series: SeriesDto | undefined, baseUrl: string): string =>
-  series?.metadata?.readingDirection === "WEBTOON"
-    ? seriesThumbnail(book.seriesId, baseUrl)
-    : bookThumbnail(book.id, baseUrl);
-
-// A tap opens the series; the tile shows the book so you see what is next.
+// A tap opens the series; the tile shows the series cover.
 export function onDeckItem(
   b: BookDto,
   style: SectionStyle,
   contentRating?: ContentRating,
   baseUrl: string = getBaseUrl(),
-  series?: SeriesDto,
 ): DiscoverSectionItem {
   const base = {
     mangaId: b.seriesId,
-    imageUrl: chapterCover(b, series, baseUrl),
+    imageUrl: seriesThumbnail(b.seriesId, baseUrl),
     title: b.metadata?.title || b.name,
     contentRating,
   };
@@ -103,7 +96,7 @@ export function chapterUpdateItem(
     type: "chapterUpdatesCarouselItem",
     mangaId: book.seriesId,
     chapterId: book.id,
-    imageUrl: chapterCover(book, series, baseUrl),
+    imageUrl: seriesThumbnail(book.seriesId, baseUrl),
     title: series.metadata?.title ?? series.name,
     subtitle: chapterLabel({ title, chapNum }),
     publishDate: new Date(book.created),

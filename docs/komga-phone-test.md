@@ -196,11 +196,12 @@ Collections sync both ways. Changing them needs an admin account.
 
 ## 4.1.2: Webtoon covers
 
-- [ ] Webtoon chapters on On Deck, Latest Chapters and read lists show the series cover; manga chapters still show their own cover.
+- [ ] Webtoon chapters on On Deck, Latest Chapters and read lists show the series cover.
 
 ## 4.1.3: Tag and creator ids
 
 - [ ] A series with a tag or genre containing an apostrophe (e.g. 'can't') refreshes without an error; tapping a creator still searches their name.
+- [ ] Chapter tiles on On Deck, Latest Chapters and read lists all show the series cover.
 
 ## When done
 

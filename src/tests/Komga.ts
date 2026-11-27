@@ -1922,7 +1922,7 @@ export async function runTests(logger: TestLogger) {
             expect(item.chapterId).to.equal("b1");
             expect(item.title).to.equal("Real Title");
             expect(item.subtitle).to.equal("The Fall");
-            expect(item.imageUrl).to.contain("/api/v1/books/b1/thumbnail");
+            expect(item.imageUrl).to.contain("/api/v1/series/s1/thumbnail");
             expect(item.publishDate?.toISOString()).to.equal("2026-11-01T10:00:00.000Z");
             expect(item.contentRating).to.equal(ContentRating.ADULT);
           }
@@ -1945,27 +1945,30 @@ export async function runTests(logger: TestLogger) {
     items.map((i) => i.imageUrl);
   const expectCovers = (urls: (string | undefined)[]): void => {
     expect(urls[0]).to.match(/\/api\/v1\/series\/webtoon1\/thumbnail$/);
-    expect(urls[1]).to.match(/\/api\/v1\/books\/bl\/thumbnail$/);
+    expect(urls[1]).to.match(/\/api\/v1\/series\/ltr1\/thumbnail$/);
   };
 
   for (const style of ["simple", "large", "hero"] as const) {
-    suite.test(`On Deck ${style} tiles use the series cover for webtoons only`, async () => {
-      await withSearchState(async () => {
-        const saved = getSectionStyle("onDeck");
-        const setup = onDeckSetup(coverBooks(), WEBTOON_SERIES);
-        try {
-          setSectionStyle("onDeck", style);
-          const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
-          expectCovers(imageUrls(result.items as { imageUrl?: string }[]));
-        } finally {
-          setup.restore();
-          setSectionStyle("onDeck", saved);
-        }
-      });
-    });
+    suite.test(
+      `On Deck ${style} tiles use the series cover for every reading direction`,
+      async () => {
+        await withSearchState(async () => {
+          const saved = getSectionStyle("onDeck");
+          const setup = onDeckSetup(coverBooks(), WEBTOON_SERIES);
+          try {
+            setSectionStyle("onDeck", style);
+            const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
+            expectCovers(imageUrls(result.items as { imageUrl?: string }[]));
+          } finally {
+            setup.restore();
+            setSectionStyle("onDeck", saved);
+          }
+        });
+      },
+    );
   }
 
-  suite.test("Latest Chapters tiles use the series cover for webtoons only", async () => {
+  suite.test("Latest Chapters tiles use the series cover for every reading direction", async () => {
     await withSearchState(async () => {
       const setup = latestSetup(coverBooks(), WEBTOON_SERIES);
       try {
@@ -1977,7 +1980,7 @@ export async function runTests(logger: TestLogger) {
     });
   });
 
-  suite.test("Read list tiles use the series cover for webtoons only", async () => {
+  suite.test("Read list tiles use the series cover for every reading direction", async () => {
     await withSearchState(async () => {
       const setup = latestSetup(coverBooks(), WEBTOON_SERIES);
       try {
@@ -1990,17 +1993,12 @@ export async function runTests(logger: TestLogger) {
     });
   });
 
-  suite.test("chapter tiles fall back to the book cover without a series or metadata", async () => {
+  suite.test("chapter tiles use the series cover without a series or metadata", async () => {
     const book = latestBook({ id: "bx", seriesId: "sx" });
     const noMeta = seriesFixture({ metadata: undefined });
     expect(onDeckItem(book, "simple").type).to.equal("simpleCarouselItem");
-    expect(onDeckItem(book, "simple", undefined, undefined, undefined).imageUrl).to.match(
-      /\/api\/v1\/books\/bx\/thumbnail$/,
-    );
-    expect(onDeckItem(book, "simple", undefined, undefined, noMeta).imageUrl).to.match(
-      /\/api\/v1\/books\/bx\/thumbnail$/,
-    );
-    expect(chapterUpdateItem(book, noMeta).imageUrl).to.match(/\/api\/v1\/books\/bx\/thumbnail$/);
+    expect(onDeckItem(book, "simple").imageUrl).to.match(/\/api\/v1\/series\/sx\/thumbnail$/);
+    expect(chapterUpdateItem(book, noMeta).imageUrl).to.match(/\/api\/v1\/series\/sx\/thumbnail$/);
   });
 
   suite.test("Latest Chapters labels an untitled book by its number", async () => {

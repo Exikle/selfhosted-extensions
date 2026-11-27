@@ -110,9 +110,6 @@ export async function komgaFetch<T>(path: string, opts: KomgaFetchOptions = {}):
 export const seriesThumbnail = (id: string, base: string = getBaseUrl()): string =>
   `${base}/api/v1/series/${id}/thumbnail`;
 
-export const bookThumbnail = (id: string, base: string = getBaseUrl()): string =>
-  `${base}/api/v1/books/${id}/thumbnail`;
-
 const NATIVE_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 // Komga converts formats the app cannot draw (avif, jxl, ...) when asked for jpeg. PNG would be

@@ -110,7 +110,13 @@ import {
 import { Komga } from "../Komga/main.js";
 import sourceInfo from "../Komga/pbconfig.js";
 import { KomgaInterceptor, shouldAuthorise } from "../Komga/services/interceptor.js";
-import { buildUrl, komgaFetch, pageUrl, seriesThumbnail } from "../Komga/services/network.js";
+import {
+  KomgaHttpError,
+  buildUrl,
+  komgaFetch,
+  pageUrl,
+  seriesThumbnail,
+} from "../Komga/services/network.js";
 import { TestSuite, registerDefaultTests } from "./suite.js";
 
 export async function runTests(logger: TestLogger) {
@@ -4299,8 +4305,115 @@ export async function runTests(logger: TestLogger) {
   suite.test("session: a response without an id keeps the stored one", async () => {
     await learn(respond({ cookies: [sessionCookie()] }));
     await learn(respond({}));
-    await learn(respond({ headers: { "X-Auth-Token": "" } }));
     expect((await sendWith())["X-Auth-Token"]).to.equal(sessionId);
+  });
+
+  suite.test(
+    "session: an empty X-Auth-Token header means Komga ended it, so it is dropped",
+    async () => {
+      await learn(respond({ cookies: [sessionCookie()] }));
+      await learn(respond({ headers: { "X-Auth-Token": "" } }));
+      expect((await sendWith())["X-Auth-Token"]).to.equal(undefined);
+    },
+  );
+
+  suite.test(
+    "session: the raw Set-Cookie header is read, among several and with attributes",
+    async () => {
+      const cookie = base64EncodeUtf8(sessionId);
+      await learn(
+        respond({
+          headers: {
+            "Set-Cookie": `other=1; Path=/, KOMGA-SESSION=${cookie}; Max-Age=604800; Path=/; Secure; HttpOnly`,
+          },
+        }),
+      );
+      expect((await sendWith())["X-Auth-Token"]).to.equal(sessionId);
+    },
+  );
+
+  suite.test("session: an empty KOMGA-SESSION cookie stores nothing", async () => {
+    await learn(respond({ headers: { "set-cookie": "KOMGA-SESSION=; Max-Age=0; Path=/" } }));
+    await learn(respond({ cookies: [sessionCookie("")] }));
+    expect((await sendWith())["X-Auth-Token"]).to.equal(undefined);
+  });
+
+  suite.test("session: interceptResponse returns the data unchanged", async () => {
+    const data = new TextEncoder().encode("body").buffer;
+    for (const response of [
+      respond({}),
+      respond({ cookies: [sessionCookie()] }),
+      respond({ status: 401 }),
+      respond({ headers: { "X-Auth-Token": "" } }),
+    ]) {
+      const out = await interceptor.interceptResponse(
+        { url: response.url, method: "GET" },
+        response,
+        data,
+      );
+      expect(out).to.equal(data);
+    }
+  });
+
+  // A session an admin ended: Komga answers 200 with plain text before Basic is checked.
+  const expiredText = "This session has been expired (possibly due to multiple concurrent logins)";
+  const answerInOrder = async <T>(
+    answers: { status: number; body: string }[],
+    run: () => Promise<T>,
+  ) => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    let calls = 0;
+    app.scheduleRequest = async () => {
+      const answer = answers[Math.min(calls++, answers.length - 1)]!;
+      return [{ status: answer.status, headers: {} }, new TextEncoder().encode(answer.body).buffer];
+    };
+    try {
+      const result = await run().catch((err: unknown) => err);
+      return { result, calls };
+    } finally {
+      app.scheduleRequest = original;
+    }
+  };
+
+  suite.test("komgaFetch retries once without the session when Komga says it expired", async () => {
+    await learn(respond({ cookies: [sessionCookie()] }));
+    const { result, calls } = await answerInOrder(
+      [
+        { status: 200, body: expiredText },
+        { status: 200, body: '{"ok":true}' },
+      ],
+      () => komgaFetch("/api/v1/libraries"),
+    );
+    expect(result).to.deep.equal({ ok: true });
+    expect(calls).to.equal(2);
+    expect((await sendWith())["X-Auth-Token"]).to.equal(undefined);
+  });
+
+  suite.test("komgaFetch retries only once, then gives the normal error", async () => {
+    await learn(respond({ cookies: [sessionCookie()] }));
+    const { result, calls } = await answerInOrder([{ status: 200, body: expiredText }], () =>
+      komgaFetch("/api/v1/libraries"),
+    );
+    expect(calls).to.equal(2);
+    expect(result instanceof KomgaHttpError).to.equal(true);
+    expect((result as Error).message).to.equal("Komga did not return JSON");
+  });
+
+  suite.test("komgaFetch does not retry when no session was sent", async () => {
+    const { result, calls } = await answerInOrder([{ status: 200, body: expiredText }], () =>
+      komgaFetch("/api/v1/libraries"),
+    );
+    expect(calls).to.equal(1);
+    expect(result instanceof KomgaHttpError).to.equal(true);
+  });
+
+  suite.test("komgaFetch does not retry typed credentials", async () => {
+    await learn(respond({ cookies: [sessionCookie()] }));
+    const { calls } = await answerInOrder([{ status: 200, body: expiredText }], () =>
+      komgaFetch("/api/v2/users/me", { credentials: { username: "t", password: "p" } }),
+    );
+    expect(calls).to.equal(1);
   });
 
   suite.test("session: a 401 drops it", async () => {

@@ -28,10 +28,11 @@ const headerOf = (
 };
 
 // Komga sends the id in the X-Auth-Token header when the request used that header, and in the
-// KOMGA-SESSION cookie otherwise (its first answer, since we send no id then).
+// KOMGA-SESSION cookie otherwise (its first answer, since we send no id then). An empty header
+// means Komga ended that session, so "" tells the caller to forget it.
 const sessionIdOf = (response: Response): string | undefined => {
   const header = headerOf(response.headers, SESSION_HEADER);
-  if (header) return header;
+  if (header !== undefined) return header;
   const cookie = response.cookies?.find((c) => c.name === SESSION_COOKIE)?.value;
   if (cookie) return sessionIdFromCookie(cookie);
   const raw = headerOf(response.headers, "set-cookie")?.match(
@@ -85,6 +86,7 @@ export class KomgaInterceptor extends PaperbackInterceptor {
     if (usedOther) return data;
 
     if (response.status === 401) dropSession(base, credentials.username);
+    else if (id === "") dropSession(base, credentials.username);
     else if (id) storeSession(base, credentials.username, id);
     return data;
   }

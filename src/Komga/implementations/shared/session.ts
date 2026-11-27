@@ -19,6 +19,8 @@ export const dropSession = (base: string, username: string): void => {
   sessions.delete(keyOf(base, username));
 };
 
+export const hasSessions = (): boolean => sessions.size > 0;
+
 export const clearSessions = (): void => sessions.clear();
 
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

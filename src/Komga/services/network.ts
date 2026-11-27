@@ -3,6 +3,7 @@
 
 import { URL } from "@paperback/types";
 
+import { clearSessions, hasSessions } from "../implementations/shared/session";
 import { getBaseUrl } from "../implementations/shared/state";
 import { authHeaders, normaliseBaseUrl } from "../implementations/shared/utils";
 
@@ -46,6 +47,8 @@ export const buildUrl = (
   return url.toString();
 };
 
+const SESSION_EXPIRED = "This session has been expired";
+
 export async function komgaFetch<T>(path: string, opts: KomgaFetchOptions = {}): Promise<T> {
   const base = normaliseBaseUrl(opts.baseUrl ?? getBaseUrl());
   if (!base) throw new Error("No Komga server set");
@@ -68,17 +71,29 @@ export async function komgaFetch<T>(path: string, opts: KomgaFetchOptions = {}):
     ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
   };
 
+  // The interceptor adds a saved session only when no login was typed.
+  let sentSession = !opts.credentials && !opts.apiKey && hasSessions();
   let status: number;
   let empty: boolean;
   let text: string;
-  try {
-    const [response, buffer] = await Application.scheduleRequest(request);
-    status = response.status;
-    empty = buffer.byteLength === 0;
-    text = empty ? "" : Application.arrayBufferToUTF8String(buffer);
-  } catch {
-    // The native error can carry the full URL; keep the message to the host the user typed.
-    throw new Error(`Could not reach ${base}`);
+  for (;;) {
+    try {
+      const [response, buffer] = await Application.scheduleRequest(request);
+      status = response.status;
+      empty = buffer.byteLength === 0;
+      text = empty ? "" : Application.arrayBufferToUTF8String(buffer);
+    } catch {
+      // The native error can carry the full URL; keep the message to the host the user typed.
+      throw new Error(`Could not reach ${base}`);
+    }
+    // Komga answers 200 with plain text when an admin ended the session. Retry once without it,
+    // so Basic logs in fresh.
+    if (sentSession && status >= 200 && status < 300 && text.startsWith(SESSION_EXPIRED)) {
+      sentSession = false;
+      clearSessions();
+      continue;
+    }
+    break;
   }
 
   if (status >= 400) throw new KomgaHttpError(status, `Komga returned ${status}`);

@@ -1990,6 +1990,19 @@ export async function runTests(logger: TestLogger) {
     });
   });
 
+  suite.test("chapter tiles fall back to the book cover without a series or metadata", async () => {
+    const book = latestBook({ id: "bx", seriesId: "sx" });
+    const noMeta = seriesFixture({ metadata: undefined });
+    expect(onDeckItem(book, "simple").type).to.equal("simpleCarouselItem");
+    expect(onDeckItem(book, "simple", undefined, undefined, undefined).imageUrl).to.match(
+      /\/api\/v1\/books\/bx\/thumbnail$/,
+    );
+    expect(onDeckItem(book, "simple", undefined, undefined, noMeta).imageUrl).to.match(
+      /\/api\/v1\/books\/bx\/thumbnail$/,
+    );
+    expect(chapterUpdateItem(book, noMeta).imageUrl).to.match(/\/api\/v1\/books\/bx\/thumbnail$/);
+  });
+
   suite.test("Latest Chapters labels an untitled book by its number", async () => {
     const item = chapterUpdateItem(
       latestBook({ metadata: { title: "Chapter 12", number: "12", numberSort: 12 } as never }),

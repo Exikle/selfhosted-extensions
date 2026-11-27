@@ -9,7 +9,7 @@ You need: an iPhone with Paperback 0.9 and your Komga server.
 Paperback upgrades an installed Komga in place (same source id), so settings and library stay.
 
 1. In Paperback, add `https://exikle.github.io/selfhosted-extensions/0.9/stable` as a repository. Paperback refuses plain `http://` repositories.
-2. Install Komga (version 4.1.0) from that repository.
+2. Install Komga (the current version) from that repository.
 3. Open the Komga settings. Check whether the server URL and login came across.
 
 ## Install
@@ -129,7 +129,7 @@ Try Regular, Large and Hero on each section.
 - [ ] Type a wrong key. Footer says "Invalid API key".
 - [ ] Clear the key. Username and Password turn back on.
 - [ ] Typing an API key doesn't drop the keyboard.
-- [ ] Root screen: the "About" section shows "Extension Version" 4.1.0 and "Komga Version".
+- [ ] Root screen: the "About" section shows "Extension Version" as the current version, and shows "Komga Version".
 - [ ] On a Komga older than 1.19 (if I have one), About shows a warning. Skip if not.
 - [ ] On a Komga older than 1.20 with a key set, About warns "API keys need Komga 1.20 or later". Skip if not.
 

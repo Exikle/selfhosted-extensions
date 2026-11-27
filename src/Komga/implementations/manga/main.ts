@@ -66,14 +66,13 @@ export async function relationSections(seriesId: string): Promise<MangaInfoRelat
 }
 
 export async function getMangaDetails(mangaId: string): Promise<SourceManga> {
+  // The lookup only needs the id, so it runs alongside the series fetch. It never rejects.
+  const relations = relationSections(mangaId);
   try {
     const series = await komgaFetch<SeriesDto>(`/api/v1/series/${mangaId}`);
     const manga = toSourceManga(series);
     const staff = staffSection(series);
-    const extras: MangaInfoExtra[] = [
-      ...(staff ? [staff] : []),
-      ...(await relationSections(mangaId)),
-    ];
+    const extras: MangaInfoExtra[] = [...(staff ? [staff] : []), ...(await relations)];
     if (extras.length > 0) manga.mangaInfo.extras = extras;
     return manga;
   } catch (err) {

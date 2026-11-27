@@ -44,13 +44,6 @@ const STYLE_TYPES: Record<Exclude<SectionStyle, "hidden">, DiscoverSectionType> 
   hero: DiscoverSectionType.featured,
 };
 
-// Sections with one look, switched on or off by a toggle.
-const FIXED_TYPES: Record<string, DiscoverSectionType> = {
-  genres: DiscoverSectionType.genres,
-  collections: DiscoverSectionType.genres,
-  latestChapters: DiscoverSectionType.chapterUpdates,
-};
-
 const READ_LIST_PREFIX = "readList:";
 
 // Throws when the request fails, so a caller can tell "none" from "could not load".
@@ -73,14 +66,15 @@ export async function loadReadLists(): Promise<ReadListDto[]> {
 
 export async function getDiscoverSections(): Promise<DiscoverSection[]> {
   const sections: DiscoverSection[] = [];
-  for (const { id, title, subtitle, fixedStyle } of DISCOVER_SECTIONS) {
+  for (const { id, title, subtitle, fixedStyle, type: fixedType } of DISCOVER_SECTIONS) {
     const style = getSectionStyle(id);
     if (style === "hidden") continue;
     sections.push({
       id,
       title,
       subtitle,
-      type: fixedStyle ? (FIXED_TYPES[id] ?? DiscoverSectionType.genres) : STYLE_TYPES[style],
+      // A fixedStyle section always carries its own type.
+      type: (fixedStyle ? fixedType : undefined) ?? STYLE_TYPES[style],
     });
   }
   // Nothing enabled means nothing to look up, so Home never waits on the read list request.
@@ -147,8 +141,8 @@ async function latestChapterItems(page: number): Promise<PagedResults<DiscoverSe
     },
   });
   const books = result.content ?? [];
-  const { visible, seriesById } = await resolveBookSeries(books);
-  const items = visible.map((b) => chapterUpdateItem(b, seriesById.get(b.seriesId)!));
+  const { pairs } = await resolveBookSeries(books);
+  const items = pairs.map(({ book, series }) => chapterUpdateItem(book, series));
   return withNext(items, books.length, page);
 }
 
@@ -169,8 +163,8 @@ async function readListItems(
     },
   );
   const books = result.content ?? [];
-  const { visible, seriesById } = await resolveBookSeries(books);
-  const items = visible.map((b) => chapterUpdateItem(b, seriesById.get(b.seriesId)!));
+  const { pairs } = await resolveBookSeries(books);
+  const items = pairs.map(({ book, series }) => chapterUpdateItem(book, series));
   // Paging follows the server's last flag, so a hidden-only page does not end the list early.
   return result.last === false && books.length > 0
     ? { items, metadata: { page: page + 1 } }

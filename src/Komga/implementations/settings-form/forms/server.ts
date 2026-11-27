@@ -90,11 +90,13 @@ export class KomgaServerForm extends Form {
   }
 
   async handleApiKey(value: string): Promise<void> {
-    // The login rows are disabled while a key is set, so the form reloads only when that flips.
+    // The login rows are disabled while a key is set, so the form reloads only when that flips,
+    // or once to drop a showing test result.
     const flips = (this.apiKey.trim() === "") !== (value.trim() === "");
+    const hadMessage = this.testMessage !== undefined;
     this.apiKey = value;
     this.testMessage = undefined;
-    if (flips) this.reloadForm();
+    if (flips || hadMessage) this.reloadForm();
   }
 
   async handleTestConnection(): Promise<void> {

@@ -36,6 +36,7 @@ export class KomgaSearchForm extends AdvancedSearchForm {
       saved && typeof saved === "object" && !Array.isArray(saved)
         ? (saved as NonNullable<KomgaSearchMetadata["filters"]>)
         : {};
+    if (meta.author !== undefined && typeof meta.author !== "string") meta.author = "";
     this.metadata = meta;
     this.groups = groups;
   }

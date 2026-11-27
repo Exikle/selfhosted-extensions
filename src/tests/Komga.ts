@@ -1088,6 +1088,8 @@ export async function runTests(logger: TestLogger) {
     expect(escapeLucene("Re:Zero (2011)")).to.equal("Re\\:Zero \\(2011\\)");
     expect(escapeLucene("plain text 123")).to.equal("plain text 123");
     expect(escapeLucene("a&&b||c")).to.equal("a\\&\\&b\\|\\|c");
+    // a\\b in, a\\\\b out: each backslash is escaped once.
+    expect(escapeLucene("a\\\\b")).to.equal("a\\\\\\\\b");
     for (const ch of [
       "+",
       "-",
@@ -1325,6 +1327,13 @@ export async function runTests(logger: TestLogger) {
     const row = form.getSections()[0]!.items[0] as unknown as { value: string };
     expect(row.value).to.equal("Oda");
     expect(form.getSearchQueryMetadata()).to.deep.equal({ author: "Oda", filters: {} });
+  });
+
+  suite.test("the search form turns a non-string author into empty text", async () => {
+    const form = new KomgaSearchForm({ title: "", metadata: { author: 5 as never } }, []);
+    const row = form.getSections()[0]!.items[0] as unknown as { value: string };
+    expect(row.value).to.equal("");
+    expect(form.getSearchQueryMetadata().author).to.equal("");
   });
 
   suite.test("getAdvancedSearchForm tolerates array metadata", async () => {
@@ -1937,11 +1946,11 @@ export async function runTests(logger: TestLogger) {
 
   const readListServer =
     (lists: { id: string; name: string }[], books: Record<string, BookDto[]> = {}) =>
-    (request: { url: string }): string => {
+    (request: { url: string }): string | { status: number } => {
       if (request.url.includes("/api/v1/readlists?")) return JSON.stringify({ content: lists });
       const match = /\/api\/v1\/readlists\/([^/]+)\/books/.exec(request.url);
       if (match) {
-        if (!books[match[1]!]) throw new Error("Not found");
+        if (!books[match[1]!]) return { status: 404 };
         return JSON.stringify({ content: books[match[1]!], last: true, number: 0 });
       }
       if (request.url.includes("/api/v1/series/list")) {
@@ -2089,6 +2098,7 @@ export async function runTests(logger: TestLogger) {
       }));
       expect(items.result.gone.items).to.deep.equal([]);
       expect(items.result.r1.items.length).to.equal(1);
+      expect(items.requests.some((r) => r.url.includes("/readlists/gone/books"))).to.equal(true);
     });
   });
 
@@ -2185,10 +2195,45 @@ export async function runTests(logger: TestLogger) {
     });
   });
 
+  suite.test("every fixed-style section names its type", async () => {
+    const fixed = DISCOVER_SECTIONS.filter((s) => s.fixedStyle);
+    expect(fixed.length).to.be.greaterThan(0);
+    for (const section of fixed) expect(section.type, section.id).to.not.equal(undefined);
+    await withSearchState(async () => {
+      const sections = await getDiscoverSections();
+      for (const section of fixed) {
+        expect(sections.find((s) => s.id === section.id)?.type).to.equal(section.type);
+      }
+    });
+  });
+
+  suite.test("resolveBookSeries pairs each visible book with its series", async () => {
+    const books = [
+      bookFixture({ id: "b1", seriesId: "s1" }),
+      bookFixture({ id: "b2", seriesId: "s2" }),
+    ];
+    const { result } = await withSearchState(() => {
+      setHideAdultContent(true);
+      setAdultGenres(["hentai"]);
+      return captureRequests(
+        JSON.stringify({
+          content: [
+            { id: "s1", name: "S1", metadata: { title: "One", genres: [] } },
+            { id: "s2", name: "S2", metadata: { title: "Two", genres: ["Hentai"] } },
+          ],
+        }),
+        () => resolveBookSeries(books),
+      );
+    });
+    expect(result.pairs.map((p) => [p.book.id, p.series.id])).to.deep.equal([["b1", "s1"]]);
+    expect(result.pairs.map((p) => p.book)).to.deep.equal(result.visible);
+  });
+
   suite.test("resolveBookSeries sends no request for no books", async () => {
     const { result, requests } = await captureRequests("{}", () => resolveBookSeries([]));
     expect(requests.length).to.equal(0);
     expect(result.visible).to.deep.equal([]);
+    expect(result.pairs).to.deep.equal([]);
     expect(result.seriesById.size).to.equal(0);
   });
 
@@ -2296,7 +2341,7 @@ export async function runTests(logger: TestLogger) {
   });
 
   const routeRequests = async <T>(
-    routes: (request: { url: string; method?: string }) => string,
+    routes: (request: { url: string; method?: string }) => string | { status: number },
     run: () => Promise<T>,
   ) => {
     const app = Application as unknown as { scheduleRequest: unknown };
@@ -2304,7 +2349,10 @@ export async function runTests(logger: TestLogger) {
     const requests: { url: string; method?: string; body?: string }[] = [];
     app.scheduleRequest = async (request: { url: string; method?: string; body?: string }) => {
       requests.push(request);
-      return [{ status: 200, headers: {} }, new TextEncoder().encode(routes(request)).buffer];
+      const routed = routes(request);
+      const status = typeof routed === "string" ? 200 : routed.status;
+      const text = typeof routed === "string" ? routed : "";
+      return [{ status, headers: {} }, new TextEncoder().encode(text).buffer];
     };
     try {
       return { result: await run(), requests };
@@ -2499,6 +2547,43 @@ export async function runTests(logger: TestLogger) {
       () => relationSections("s1"),
     );
     expect(result.map((s) => s.id)).to.deep.equal(["collection:c1", "collection:c2"]);
+  });
+
+  suite.test("getMangaDetails starts the collections lookup with the series fetch", async () => {
+    const app = Application as unknown as { scheduleRequest: unknown };
+    const original = app.scheduleRequest;
+    const started: string[] = [];
+    let releaseSeries!: () => void;
+    const seriesGate = new Promise<void>((resolve) => {
+      releaseSeries = resolve;
+    });
+    const respond = (body: unknown) => [
+      { status: 200, headers: {} },
+      new TextEncoder().encode(JSON.stringify(body)).buffer,
+    ];
+    app.scheduleRequest = async (request: { url: string }) => {
+      if (request.url.endsWith("/series/s1")) {
+        started.push("series");
+        await seriesGate;
+        return respond(series);
+      }
+      if (request.url.includes("/series/s1/collections")) {
+        started.push("collections");
+        return respond([]);
+      }
+      return respond({ content: [], last: true });
+    };
+    try {
+      const pending = getMangaDetails("s1");
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(started).to.have.members(["series", "collections"]);
+      releaseSeries();
+      const details = await pending;
+      expect(details.mangaInfo.extras?.map((e) => e.id)).to.deep.equal(["author"]);
+    } finally {
+      releaseSeries();
+      app.scheduleRequest = original;
+    }
   });
 
   suite.test("getMangaDetails keeps staff when the collections lookup fails", async () => {
@@ -2787,6 +2872,27 @@ export async function runTests(logger: TestLogger) {
     expect(headers["Authorization"]).to.equal(undefined);
   });
 
+  suite.test("editing the API key clears the test message and reloads once", async () => {
+    const server = new KomgaServerForm() as unknown as SettingsLike;
+    let reloads = 0;
+    (server as { reloadForm: () => void }).reloadForm = () => {
+      reloads++;
+    };
+    const footerShown = () => server.getSections().some((s) => s.footer === "Connected as a@b.c");
+    await routeRequests(settingsServer, async () => {
+      await (server.handleApiKey as (v: string) => Promise<void>)("k");
+      await (server.handleTestConnection as () => Promise<void>)();
+    });
+    expect(footerShown()).to.equal(true);
+    reloads = 0;
+    // The key stays non-empty, so only the cleared message needs the reload.
+    await (server.handleApiKey as (v: string) => Promise<void>)("ke");
+    expect(footerShown()).to.equal(false);
+    expect(reloads).to.equal(1);
+    await (server.handleApiKey as (v: string) => Promise<void>)("key");
+    expect(reloads).to.equal(1);
+  });
+
   suite.test("server form submit saves the API key", async () => {
     const before = { url: getBaseUrl(), creds: getCredentials(), key: getApiKey() };
     try {
@@ -2865,9 +2971,12 @@ export async function runTests(logger: TestLogger) {
         const params = row as unknown as {
           title: string;
           value: string;
+          onSelect?: unknown;
           items: { id: string; title: string }[];
         };
         expect(params.title).to.equal(DISCOVER_SECTIONS.find((s) => s.id === id)!.title);
+        expect(params.onSelect, `${id} onSelect`).to.be.a("string");
+        expect(params.items.map((i) => i.id)).to.deep.equal(["simple", "large", "hero", "hidden"]);
         expect(params.items.map((i) => i.title)).to.deep.equal([
           "Regular",
           "Large",
@@ -2915,14 +3024,17 @@ export async function runTests(logger: TestLogger) {
   const aboutRows = async (version: string | undefined, key: string): Promise<SettingsLike> => {
     let sections: ReturnType<SettingsLike["getSections"]> = [];
     clearServerVersionCache();
-    await withApiKey(key, async () => {
-      await routeRequests(aboutServer(version), async () => {
-        const root = new KomgaSettingsForm() as unknown as SettingsLike;
-        await root.formWillAppear!();
-        sections = root.getSections();
+    try {
+      await withApiKey(key, async () => {
+        await routeRequests(aboutServer(version), async () => {
+          const root = new KomgaSettingsForm() as unknown as SettingsLike;
+          await root.formWillAppear!();
+          sections = root.getSections();
+        });
       });
-    });
-    clearServerVersionCache();
+    } finally {
+      clearServerVersionCache();
+    }
     return { getSections: () => sections };
   };
 
@@ -2935,16 +3047,21 @@ export async function runTests(logger: TestLogger) {
   suite.test("about shows the Komga version, using the public api docs", async () => {
     let root!: SettingsLike;
     clearServerVersionCache();
-    const { requests } = await routeRequests(aboutServer("1.30.2-beta"), async () => {
-      root = new KomgaSettingsForm() as unknown as SettingsLike;
-      await root.formWillAppear!();
-    });
-    clearServerVersionCache();
+    let requests: { url: string }[] = [];
+    try {
+      ({ requests } = await routeRequests(aboutServer("1.30.2-beta"), async () => {
+        root = new KomgaSettingsForm() as unknown as SettingsLike;
+        await root.formWillAppear!();
+      }));
+    } finally {
+      clearServerVersionCache();
+    }
     expect(rowOf(root, "komga_version").value).to.equal("1.30.2-beta");
     expect(requests.some((r) => r.url.endsWith("/v3/api-docs"))).to.equal(true);
   });
 
   suite.test("about shows Unknown on a 403, a 500 and a missing version", async () => {
+    clearServerVersionCache();
     for (const status of [403, 500]) {
       const root = new KomgaSettingsForm() as unknown as SettingsLike;
       await withResponse(status, "", () => root.formWillAppear!());

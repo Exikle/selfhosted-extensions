@@ -172,7 +172,7 @@ const stringTags = (kind: "genre" | "tag", values: string[]) =>
 
 const plainTags = (kind: "publisher" | "language" | "ageRating", values: string[]) =>
   values
-    .filter((value) => typeof value === "string" && value !== "")
+    .filter((value) => value !== "")
     .map((value) => ({ id: encodeTagId(kind, value), title: value }));
 
 const READ_STATUSES = [

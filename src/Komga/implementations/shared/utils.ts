@@ -16,8 +16,21 @@ export type TagKind =
 
 export const normaliseBaseUrl = (url: string): string => url.trim().replace(/\/+$/, "");
 
-export const encodeTagId = (kind: TagKind, value: string): string =>
-  `${kind}:${encodeURIComponent(value)}`;
+const EXTRA_ESCAPES: Record<string, string> = {
+  "!": "%21",
+  "'": "%27",
+  "(": "%28",
+  ")": "%29",
+  "*": "%2A",
+  "~": "%7E",
+};
+
+// Paperback rejects ' ! * ~ in an id, and encodeURIComponent leaves them alone. Escape them too.
+// decodeURIComponent reads the result back, as it did for ids saved before this escaping.
+export const toSafeId = (text: string): string =>
+  encodeURIComponent(text).replace(/[!'()*~]/g, (c) => EXTRA_ESCAPES[c]!);
+
+export const encodeTagId = (kind: TagKind, value: string): string => `${kind}:${toSafeId(value)}`;
 
 export function decodeTagId(id: string): { kind: string; value: string } | undefined {
   const index = id.indexOf(":");

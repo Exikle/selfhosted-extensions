@@ -7,7 +7,7 @@ import { seriesThumbnail } from "../../services/network";
 import { parseContentRating } from "../shared/content-rating";
 import type { AuthorDto, SeriesDto } from "../shared/models";
 import { getBaseUrl } from "../shared/state";
-import { capitalise, encodeTagId } from "../shared/utils";
+import { capitalise, encodeTagId, toSafeId } from "../shared/utils";
 
 const SHARE_LINK_PREFERENCE = ["anilist", "mangadex", "mangaupdates", "myanimelist"];
 
@@ -107,7 +107,7 @@ export function staffSection(
     id: "author",
     title: "Creators",
     items: [...rolesByName].map(([name, roles]) => ({
-      id: name,
+      id: toSafeId(name),
       staff: { title: name, imageUrl, ...(roles.length > 0 ? { subtitle: roles.join(", ") } : {}) },
     })),
   };

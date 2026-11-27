@@ -118,6 +118,14 @@ export function buildSearchBody(
   };
 }
 
+function decodeAuthor(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
 export async function getSearchResults(
   query: SearchQuery<KomgaSearchMetadata>,
   metadata: { page?: number } | undefined,
@@ -127,7 +135,10 @@ export async function getSearchResults(
     const page = typeof metadata?.page === "number" ? metadata.page : 0;
     const raw = query.metadata;
     const filters = raw && !Array.isArray(raw) ? raw.filters : undefined;
-    const author = raw && !Array.isArray(raw) && typeof raw.author === "string" ? raw.author : "";
+    const authorText =
+      raw && !Array.isArray(raw) && typeof raw.author === "string" ? raw.author : "";
+    // A staff tap fills this with an encoded id; text a user typed may not be encoded at all.
+    const author = decodeAuthor(authorText);
     const ordered = raw && !Array.isArray(raw) ? raw.collectionOrdered === true : false;
     const komgaSort = resolveSort(sort?.id, query.title ?? "", filters, ordered);
     const result = await komgaFetch<Page<SeriesDto>>("/api/v1/series/list", {

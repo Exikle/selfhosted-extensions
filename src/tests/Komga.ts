@@ -4679,5 +4679,66 @@ export async function runTests(logger: TestLogger) {
     expect(kept).to.deep.equal([3, 4, 5, 6, 7]);
   });
 
+  const isValidPaperbackId = (id: string): boolean => /^[A-Za-z0-9._\-@()[\]%?#+=/&:]+$/.test(id);
+  const AWKWARD = ["seeing things other humans can't", "Hello!", "A*B~C", "日本語", "(x)", "a:b"];
+
+  suite.test("encodeTagId gives ids Paperback accepts, and they round-trip", async () => {
+    for (const value of AWKWARD) {
+      const id = encodeTagId("tag", value);
+      expect(isValidPaperbackId(id), id).to.equal(true);
+      expect(decodeTagId(id)).to.deep.equal({ kind: "tag", value });
+    }
+  });
+
+  suite.test("an id saved by 4.1.2 or earlier still decodes", async () => {
+    expect(decodeTagId("tag:can't")).to.deep.equal({ kind: "tag", value: "can't" });
+    expect(decodeTagId("genre:Hello!")).to.deep.equal({ kind: "genre", value: "Hello!" });
+  });
+
+  suite.test("toSourceManga gives only valid tag ids for awkward genres and tags", async () => {
+    const { mangaInfo } = toSourceManga({
+      ...series,
+      metadata: { ...series.metadata, genres: AWKWARD, tags: AWKWARD, publisher: "O'Reilly!" },
+    });
+    const ids = mangaInfo.tagGroups!.flatMap((g) => g.tags.map((t) => t.id));
+    expect(ids.length).to.be.greaterThan(AWKWARD.length * 2);
+    for (const id of ids) expect(isValidPaperbackId(id), id).to.equal(true);
+  });
+
+  suite.test("staff ids are valid and the author search gets the original name", async () => {
+    const section = staffSection({
+      ...series,
+      booksMetadata: {
+        summary: "",
+        authors: [
+          { name: "O'Brien", role: "writer" },
+          { name: "Jean Dupont", role: "writer" },
+        ],
+      },
+    });
+    expect(section?.id).to.equal("author");
+    for (const item of section!.items) expect(isValidPaperbackId(item.id), item.id).to.equal(true);
+    const search = async (author: string) => {
+      const { requests } = await captureRequests(seriesJson(0), () =>
+        getSearchResults({ title: "", metadata: { author } }, undefined, undefined),
+      );
+      return JSON.parse(requests[0]!.body!).condition.allOf;
+    };
+    for (const [index, name] of ["O'Brien", "Jean Dupont"].entries()) {
+      expect(await search(section!.items[index]!.id)).to.deep.contain({
+        author: { operator: "is", value: { name } },
+      });
+    }
+  });
+
+  suite.test("typed author text that is not an encoded id stays as typed", async () => {
+    const { requests } = await captureRequests(seriesJson(0), () =>
+      getSearchResults({ title: "", metadata: { author: "50%" } }, undefined, undefined),
+    );
+    expect(JSON.parse(requests[0]!.body!).condition.allOf).to.deep.contain({
+      author: { operator: "is", value: { name: "50%" } },
+    });
+  });
+
   await suite.run();
 }

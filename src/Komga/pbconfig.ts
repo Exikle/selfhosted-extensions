@@ -6,7 +6,7 @@ import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/typ
 export default {
   name: "Komga",
   description: "Extension that pulls content from a self-hosted Komga server.",
-  version: "4.1.2",
+  version: "4.1.3",
   icon: "icon.png",
   language: "multi",
   contentRating: ContentRating.EVERYONE,

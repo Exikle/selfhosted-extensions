@@ -1678,7 +1678,7 @@ export async function runTests(logger: TestLogger) {
 
   const onDeckSetup = (
     books: BookDto[],
-    series: { id: string; genres?: string[]; ageRating?: number }[],
+    series: { id: string; genres?: string[]; ageRating?: number; readingDirection?: string }[],
     seriesStatus = 200,
   ) => {
     const app = Application as unknown as { scheduleRequest: unknown };
@@ -1697,7 +1697,11 @@ export async function runTests(logger: TestLogger) {
       if (!found) return reply(404, {});
       return reply(200, {
         id: found.id,
-        metadata: { genres: found.genres ?? [], ageRating: found.ageRating },
+        metadata: {
+          genres: found.genres ?? [],
+          ageRating: found.ageRating,
+          readingDirection: found.readingDirection,
+        },
       });
     };
     return {
@@ -1807,7 +1811,13 @@ export async function runTests(logger: TestLogger) {
 
   const latestSetup = (
     books: BookDto[],
-    series: { id: string; title?: string; genres?: string[]; ageRating?: number }[],
+    series: {
+      id: string;
+      title?: string;
+      genres?: string[];
+      ageRating?: number;
+      readingDirection?: string;
+    }[],
   ) => {
     const app = Application as unknown as { scheduleRequest: unknown };
     const original = app.scheduleRequest;
@@ -1818,14 +1828,21 @@ export async function runTests(logger: TestLogger) {
     ];
     app.scheduleRequest = async (request: { url: string; body?: string }) => {
       requests.push(request);
-      if (request.url.includes("/books/list")) return reply({ content: books });
+      if (request.url.includes("/books/list") || request.url.includes("/readlists/")) {
+        return reply({ content: books });
+      }
       const id = /\/api\/v1\/series\/([^/?]+)$/.exec(request.url)?.[1];
       const found = series.find((s) => s.id === id);
       if (!found) return [{ status: 404, headers: {} }, new TextEncoder().encode("").buffer];
       return reply({
         id: found.id,
         name: found.id,
-        metadata: { title: found.title, genres: found.genres ?? [], ageRating: found.ageRating },
+        metadata: {
+          title: found.title,
+          genres: found.genres ?? [],
+          ageRating: found.ageRating,
+          readingDirection: found.readingDirection,
+        },
       });
     };
     return {
@@ -1915,6 +1932,63 @@ export async function runTests(logger: TestLogger) {
       });
     },
   );
+
+  const WEBTOON_SERIES = [
+    { id: "webtoon1", readingDirection: "WEBTOON" },
+    { id: "ltr1", readingDirection: "LEFT_TO_RIGHT" },
+  ];
+  const coverBooks = (): BookDto[] => [
+    latestBook({ id: "bw", seriesId: "webtoon1" }),
+    latestBook({ id: "bl", seriesId: "ltr1" }),
+  ];
+  const imageUrls = (items: { imageUrl?: string }[]): (string | undefined)[] =>
+    items.map((i) => i.imageUrl);
+  const expectCovers = (urls: (string | undefined)[]): void => {
+    expect(urls[0]).to.match(/\/api\/v1\/series\/webtoon1\/thumbnail$/);
+    expect(urls[1]).to.match(/\/api\/v1\/books\/bl\/thumbnail$/);
+  };
+
+  for (const style of ["simple", "large", "hero"] as const) {
+    suite.test(`On Deck ${style} tiles use the series cover for webtoons only`, async () => {
+      await withSearchState(async () => {
+        const saved = getSectionStyle("onDeck");
+        const setup = onDeckSetup(coverBooks(), WEBTOON_SERIES);
+        try {
+          setSectionStyle("onDeck", style);
+          const result = await getDiscoverSectionItems(sectionFor("onDeck"), undefined);
+          expectCovers(imageUrls(result.items as { imageUrl?: string }[]));
+        } finally {
+          setup.restore();
+          setSectionStyle("onDeck", saved);
+        }
+      });
+    });
+  }
+
+  suite.test("Latest Chapters tiles use the series cover for webtoons only", async () => {
+    await withSearchState(async () => {
+      const setup = latestSetup(coverBooks(), WEBTOON_SERIES);
+      try {
+        const result = await getDiscoverSectionItems(sectionFor("latestChapters"), undefined);
+        expectCovers(imageUrls(result.items as { imageUrl?: string }[]));
+      } finally {
+        setup.restore();
+      }
+    });
+  });
+
+  suite.test("Read list tiles use the series cover for webtoons only", async () => {
+    await withSearchState(async () => {
+      const setup = latestSetup(coverBooks(), WEBTOON_SERIES);
+      try {
+        const result = await getDiscoverSectionItems(sectionFor("readList:r1"), undefined);
+        expect(setup.requests[0]!.url).to.contain("/api/v1/readlists/r1/books");
+        expectCovers(imageUrls(result.items as { imageUrl?: string }[]));
+      } finally {
+        setup.restore();
+      }
+    });
+  });
 
   suite.test("Latest Chapters labels an untitled book by its number", async () => {
     const item = chapterUpdateItem(

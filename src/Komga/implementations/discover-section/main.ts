@@ -126,9 +126,10 @@ async function onDeckItems(
 
   const { visible, seriesById } = await resolveBookSeries(books);
   const base = getBaseUrl();
-  const items = visible.map((b) =>
-    onDeckItem(b, style, parseContentRating(seriesById.get(b.seriesId)?.metadata ?? {}), base),
-  );
+  const items = visible.map((b) => {
+    const series = seriesById.get(b.seriesId);
+    return onDeckItem(b, style, parseContentRating(series?.metadata ?? {}), base, series);
+  });
   return withNext(items, books.length, page);
 }
 

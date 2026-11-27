@@ -194,6 +194,10 @@ Collections sync both ways. Changing them needs an admin account.
 - [ ] Pages that used to convert still load.
 - [ ] Optional: in Komga, Account settings → Authentication activity shows far fewer password logins after browsing Home.
 
+## 4.1.2: Webtoon covers
+
+- [ ] Webtoon chapters on On Deck, Latest Chapters and read lists show the series cover; manga chapters still show their own cover.
+
 ## When done
 
 Tell Claude what passed and what failed. The merge into `0.9/stable` waits for your word.

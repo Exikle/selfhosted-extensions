@@ -58,16 +58,23 @@ export function seriesItem(
     : { type: "simpleCarouselItem", ...base };
 }
 
+// A webtoon's page 1 is a tall strip, so its chapter tiles show the series cover instead.
+const chapterCover = (book: BookDto, series: SeriesDto | undefined, baseUrl: string): string =>
+  series?.metadata?.readingDirection === "WEBTOON"
+    ? seriesThumbnail(book.seriesId, baseUrl)
+    : bookThumbnail(book.id, baseUrl);
+
 // A tap opens the series; the tile shows the book so you see what is next.
 export function onDeckItem(
   b: BookDto,
   style: SectionStyle,
   contentRating?: ContentRating,
   baseUrl: string = getBaseUrl(),
+  series?: SeriesDto,
 ): DiscoverSectionItem {
   const base = {
     mangaId: b.seriesId,
-    imageUrl: bookThumbnail(b.id, baseUrl),
+    imageUrl: chapterCover(b, series, baseUrl),
     title: b.metadata?.title || b.name,
     contentRating,
   };
@@ -96,7 +103,7 @@ export function chapterUpdateItem(
     type: "chapterUpdatesCarouselItem",
     mangaId: book.seriesId,
     chapterId: book.id,
-    imageUrl: bookThumbnail(book.id, baseUrl),
+    imageUrl: chapterCover(book, series, baseUrl),
     title: series.metadata?.title ?? series.name,
     subtitle: chapterLabel({ title, chapNum }),
     publishDate: new Date(book.created),

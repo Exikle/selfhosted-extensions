@@ -27,6 +27,7 @@ import {
   type SeriesDto,
 } from "../shared/models";
 import {
+  getBaseUrl,
   getEnabledReadLists,
   getIncludeOneshots,
   getReadListEnabled,
@@ -124,8 +125,9 @@ async function onDeckItems(
   if (books.length === 0) return withNext([], 0, page);
 
   const { visible, seriesById } = await resolveBookSeries(books);
+  const base = getBaseUrl();
   const items = visible.map((b) =>
-    onDeckItem(b, style, parseContentRating(seriesById.get(b.seriesId)?.metadata ?? {})),
+    onDeckItem(b, style, parseContentRating(seriesById.get(b.seriesId)?.metadata ?? {}), base),
   );
   return withNext(items, books.length, page);
 }
@@ -142,7 +144,8 @@ async function latestChapterItems(page: number): Promise<PagedResults<DiscoverSe
   });
   const books = result.content ?? [];
   const { pairs } = await resolveBookSeries(books);
-  const items = pairs.map(({ book, series }) => chapterUpdateItem(book, series));
+  const base = getBaseUrl();
+  const items = pairs.map(({ book, series }) => chapterUpdateItem(book, series, base));
   return withNext(items, books.length, page);
 }
 
@@ -164,7 +167,8 @@ async function readListItems(
   );
   const books = result.content ?? [];
   const { pairs } = await resolveBookSeries(books);
-  const items = pairs.map(({ book, series }) => chapterUpdateItem(book, series));
+  const base = getBaseUrl();
+  const items = pairs.map(({ book, series }) => chapterUpdateItem(book, series, base));
   // Paging follows the server's last flag, so a hidden-only page does not end the list early.
   return result.last === false && books.length > 0
     ? { items, metadata: { page: page + 1 } }
@@ -181,8 +185,9 @@ async function keepReadingItems(
     body: inProgressBody(),
   });
   const content = result.content ?? [];
+  const base = getBaseUrl();
   return withNext(
-    content.map((s) => seriesItem(s, style)),
+    content.map((s) => seriesItem(s, style, base)),
     content.length,
     page,
   );
@@ -196,7 +201,10 @@ async function nearlyFinishedItems(
     query: { unpaged: true },
     body: inProgressBody(),
   });
-  return { items: sortNearlyFinished(result.content ?? []).map((s) => seriesItem(s, style)) };
+  const base = getBaseUrl();
+  return {
+    items: sortNearlyFinished(result.content ?? []).map((s) => seriesItem(s, style, base)),
+  };
 }
 
 async function feedItems(
@@ -214,9 +222,10 @@ async function feedItems(
     },
   });
   const content = result.content ?? [];
+  const base = getBaseUrl();
   const items = content
     .filter((s) => !isHiddenSeries(s.metadata?.genres ?? []))
-    .map((s) => seriesItem(s, style));
+    .map((s) => seriesItem(s, style, base));
   return withNext(items, content.length, page);
 }
 

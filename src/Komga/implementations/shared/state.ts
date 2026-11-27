@@ -2,6 +2,7 @@
 /* Copyright © 2026 Exikle */
 
 import { ADULT_GENRES, MATURE_GENRES } from "./content-rating";
+import { clearSessions } from "./session";
 import { normaliseBaseUrl } from "./utils";
 
 export type SectionStyle = "hidden" | "simple" | "large" | "hero";
@@ -30,20 +31,26 @@ const getSecureString = (key: string, fallback: string): string => {
 
 export const getBaseUrl = (): string =>
   normaliseBaseUrl(getKey("serverURL", "https://demo.komga.org"));
-export const setBaseUrl = (url: string): void => setKey("serverURL", normaliseBaseUrl(url));
+export const setBaseUrl = (url: string): void => {
+  clearSessions();
+  setKey("serverURL", normaliseBaseUrl(url));
+};
 
 export const getCredentials = (): { username: string; password: string } => ({
   username: getSecureString("serverUsername", "demo@komga.org"),
   password: getSecureString("serverPassword", "komga-demo"),
 });
 export const setCredentials = (username: string, password: string): void => {
+  clearSessions();
   Application.setSecureState(username, "serverUsername");
   Application.setSecureState(password, "serverPassword");
 };
 
 export const getApiKey = (): string => getSecureString("serverApiKey", "");
-export const setApiKey = (key: string): void =>
+export const setApiKey = (key: string): void => {
+  clearSessions();
   Application.setSecureState(key.trim(), "serverApiKey");
+};
 
 export const getHideAdultContent = (): boolean => getKey("hideAdultContent", false);
 export const setHideAdultContent = (v: boolean): void => setKey("hideAdultContent", v);
@@ -92,6 +99,14 @@ export const getStoredServerVersion = (baseUrl: string): StoredServerVersion | u
   const entry = getStoredServerVersions()[baseUrl];
   return typeof entry?.version === "string" && typeof entry.at === "number" ? entry : undefined;
 };
-export const setStoredServerVersion = (baseUrl: string, version: string, at: number): void =>
-  setKey("serverVersions", { ...getStoredServerVersions(), [baseUrl]: { version, at } });
+const STORED_VERSIONS_KEPT = 5;
+
+// Only the most recent base URLs are kept, so old servers do not pile up.
+export const setStoredServerVersion = (baseUrl: string, version: string, at: number): void => {
+  const all = { ...getStoredServerVersions(), [baseUrl]: { version, at } };
+  const recent = Object.entries(all)
+    .sort(([, a], [, b]) => (b.at ?? 0) - (a.at ?? 0))
+    .slice(0, STORED_VERSIONS_KEPT);
+  setKey("serverVersions", Object.fromEntries(recent));
+};
 export const clearStoredServerVersions = (): void => setKey("serverVersions", {});

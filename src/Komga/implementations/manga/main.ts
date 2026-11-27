@@ -72,11 +72,11 @@ export async function getMangaDetails(mangaId: string): Promise<SourceManga> {
   // The lookup only needs the id, so it runs alongside the series fetch. It never rejects.
   const relations = relationSections(mangaId);
   try {
+    const base = getBaseUrl();
     const series =
-      getCachedSeries(getBaseUrl(), mangaId) ??
-      (await komgaFetch<SeriesDto>(`/api/v1/series/${mangaId}`));
-    const manga = toSourceManga(series);
-    const staff = staffSection(series);
+      getCachedSeries(base, mangaId) ?? (await komgaFetch<SeriesDto>(`/api/v1/series/${mangaId}`));
+    const manga = toSourceManga(series, base);
+    const staff = staffSection(series, base);
     const extras: MangaInfoExtra[] = [...(staff ? [staff] : []), ...(await relations)];
     if (extras.length > 0) manga.mangaInfo.extras = extras;
     return manga;

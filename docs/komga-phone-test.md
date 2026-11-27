@@ -188,6 +188,12 @@ Collections sync both ways. Changing them needs an admin account.
 - [ ] Edit only a series' metadata in Komga. Refresh my library. It does not show as updated.
 - [ ] Add a new chapter file in Komga. Scan. Refresh. The new chapter shows up.
 
+## 4.1.1: Home rows and speed
+
+- [ ] On Deck, Latest Chapters and read-list rows show books again.
+- [ ] Pages that used to convert still load.
+- [ ] Optional: in Komga, Account settings → Authentication activity shows far fewer password logins after browsing Home.
+
 ## When done
 
 Tell Claude what passed and what failed. The merge into `0.9/stable` waits for your word.

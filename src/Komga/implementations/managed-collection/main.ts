@@ -11,6 +11,7 @@ import type {
 import { komgaFetch } from "../../services/network";
 import { toSourceManga } from "../manga/parsers";
 import type { CollectionDto, Page, SeriesDto, UserDto } from "../shared/models";
+import { getBaseUrl } from "../shared/state";
 import { errorMessage, mapPool, rowsOf } from "../shared/utils";
 
 const NOT_ADMIN = "Changing Komga collections needs an admin account";
@@ -38,6 +39,7 @@ export async function getManagedCollections(): Promise<ManagedCollection[]> {
 export async function getManagedCollectionItems(
   collections: ManagedCollection[],
 ): Promise<ManagedCollectionItems[]> {
+  const base = getBaseUrl();
   return mapPool(
     collections,
     MAX_PARALLEL_READS,
@@ -47,7 +49,10 @@ export async function getManagedCollectionItems(
           `/api/v1/collections/${collection.id}/series`,
           { query: { unpaged: true } },
         );
-        return { collectionId: collection.id, items: rowsOf(response).map(toSourceManga) };
+        return {
+          collectionId: collection.id,
+          items: rowsOf(response).map((s) => toSourceManga(s, base)),
+        };
       } catch (error) {
         throw new Error(`Could not load Komga collection ${collection.id}: ${errorMessage(error)}`);
       }

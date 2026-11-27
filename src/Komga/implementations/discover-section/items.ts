@@ -11,7 +11,7 @@ import { bookThumbnail, seriesThumbnail } from "../../services/network";
 import { parseChapterNumber } from "../chapter-providing/parsers";
 import { parseContentRating } from "../shared/content-rating";
 import { PAGE_SIZE, type BookDto, type SeriesDto } from "../shared/models";
-import type { SectionStyle } from "../shared/state";
+import { getBaseUrl, type SectionStyle } from "../shared/state";
 import { chapterLabel, parseChapterTitle } from "../shared/titles";
 import { capitalise } from "../shared/utils";
 
@@ -22,10 +22,14 @@ export const sortNearlyFinished = (series: SeriesDto[]): SeriesDto[] =>
     .sort((a, b) => a.booksUnreadCount - b.booksUnreadCount)
     .slice(0, PAGE_SIZE);
 
-export function seriesItem(s: SeriesDto, style: SectionStyle): DiscoverSectionItem {
+export function seriesItem(
+  s: SeriesDto,
+  style: SectionStyle,
+  baseUrl: string = getBaseUrl(),
+): DiscoverSectionItem {
   const base = {
     mangaId: s.id,
-    imageUrl: seriesThumbnail(s.id),
+    imageUrl: seriesThumbnail(s.id, baseUrl),
     title: s.metadata?.title ?? s.name,
     contentRating: parseContentRating(s.metadata ?? {}),
   };
@@ -59,10 +63,11 @@ export function onDeckItem(
   b: BookDto,
   style: SectionStyle,
   contentRating?: ContentRating,
+  baseUrl: string = getBaseUrl(),
 ): DiscoverSectionItem {
   const base = {
     mangaId: b.seriesId,
-    imageUrl: bookThumbnail(b.id),
+    imageUrl: bookThumbnail(b.id, baseUrl),
     title: b.metadata?.title || b.name,
     contentRating,
   };
@@ -80,14 +85,18 @@ export function onDeckItem(
 }
 
 // A tap opens the series; the subtitle names the chapter the way the chapter list does.
-export function chapterUpdateItem(book: BookDto, series: SeriesDto): ChapterUpdatesCarouselItem {
+export function chapterUpdateItem(
+  book: BookDto,
+  series: SeriesDto,
+  baseUrl: string = getBaseUrl(),
+): ChapterUpdatesCarouselItem {
   const chapNum = parseChapterNumber(book);
   const { title } = parseChapterTitle(book.metadata.title, chapNum);
   return {
     type: "chapterUpdatesCarouselItem",
     mangaId: book.seriesId,
     chapterId: book.id,
-    imageUrl: bookThumbnail(book.id),
+    imageUrl: bookThumbnail(book.id, baseUrl),
     title: series.metadata?.title ?? series.name,
     subtitle: chapterLabel({ title, chapNum }),
     publishDate: new Date(book.created),

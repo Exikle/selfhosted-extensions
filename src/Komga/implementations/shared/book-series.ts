@@ -10,7 +10,7 @@ import { mapPool } from "./utils";
 
 const SERIES_LOOKUPS_IN_FLIGHT = 6;
 
-// A series that Komga says is gone (404) is left out; any other error fails the lookup.
+// A series that Komga says is gone (404) or that the user may not see (403) is left out; any other error fails the lookup.
 async function fetchSeries(baseUrl: string, seriesId: string): Promise<SeriesDto | undefined> {
   const cached = getCachedSeries(baseUrl, seriesId);
   if (cached !== undefined) return cached;
@@ -20,7 +20,8 @@ async function fetchSeries(baseUrl: string, seriesId: string): Promise<SeriesDto
     cacheSeries(baseUrl, seriesId, series);
     return series;
   } catch (err) {
-    if (err instanceof KomgaHttpError && err.status === 404) return undefined;
+    if (err instanceof KomgaHttpError && (err.status === 404 || err.status === 403))
+      return undefined;
     throw err;
   }
 }

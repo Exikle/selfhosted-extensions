@@ -6,6 +6,7 @@ import type { MangaInfoStaffSection, SourceManga, TagSection } from "@paperback/
 import { seriesThumbnail } from "../../services/network";
 import { parseContentRating } from "../shared/content-rating";
 import type { AuthorDto, SeriesDto } from "../shared/models";
+import { getBaseUrl } from "../shared/state";
 import { capitalise, encodeTagId } from "../shared/utils";
 
 const SHARE_LINK_PREFERENCE = ["anilist", "mangadex", "mangaupdates", "myanimelist"];
@@ -28,7 +29,7 @@ const namesWithRole = (authors: AuthorDto[] | undefined, role: string): string |
     .map((author) => author.name)
     .join(", ") || undefined;
 
-export function toSourceManga(series: SeriesDto): SourceManga {
+export function toSourceManga(series: SeriesDto, base: string = getBaseUrl()): SourceManga {
   const { metadata, booksMetadata } = series;
 
   const tagGroups: TagSection[] = [
@@ -62,7 +63,7 @@ export function toSourceManga(series: SeriesDto): SourceManga {
     mangaInfo: {
       primaryTitle: metadata.title,
       secondaryTitles: (metadata.alternateTitles ?? []).map((alt) => alt.title),
-      thumbnailUrl: seriesThumbnail(series.id),
+      thumbnailUrl: seriesThumbnail(series.id, base),
       contentRating: parseContentRating(metadata),
       status: metadata.status.toLowerCase(),
       author: namesWithRole(booksMetadata.authors, "writer"),
@@ -88,7 +89,10 @@ export function toSourceManga(series: SeriesDto): SourceManga {
 }
 
 // One person per unique author name; Komga lists a person once per role.
-export function staffSection(series: SeriesDto): MangaInfoStaffSection | undefined {
+export function staffSection(
+  series: SeriesDto,
+  base: string = getBaseUrl(),
+): MangaInfoStaffSection | undefined {
   const rolesByName = new Map<string, string[]>();
   for (const { name, role } of series.booksMetadata.authors ?? []) {
     const roles = rolesByName.get(name) ?? [];
@@ -97,7 +101,7 @@ export function staffSection(series: SeriesDto): MangaInfoStaffSection | undefin
     rolesByName.set(name, roles);
   }
   if (rolesByName.size === 0) return undefined;
-  const imageUrl = seriesThumbnail(series.id);
+  const imageUrl = seriesThumbnail(series.id, base);
   return {
     type: "staff",
     id: "author",

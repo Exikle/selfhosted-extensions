@@ -74,6 +74,7 @@ import { escapeLucene } from "../Komga/implementations/shared/lucene.js";
 import type { BookDto, SeriesDto } from "../Komga/implementations/shared/models.js";
 import { clearSeriesCache } from "../Komga/implementations/shared/series-cache.js";
 import { compareVersions } from "../Komga/implementations/shared/server-info.js";
+import { clearSessions, getSession } from "../Komga/implementations/shared/session.js";
 import {
   getAdultGenres,
   getApiKey,
@@ -92,7 +93,9 @@ import {
   setIncludeOneshots,
   setReadListEnabled,
   setSectionStyle,
+  getStoredServerVersion,
   setSelectedLibraries,
+  setStoredServerVersion,
 } from "../Komga/implementations/shared/state.js";
 import { chapterLabel, parseChapterTitle } from "../Komga/implementations/shared/titles.js";
 import {
@@ -119,6 +122,7 @@ export async function runTests(logger: TestLogger) {
     clearSeriesCache();
     clearLookupCache();
     clearServerVersionCache();
+    clearSessions();
     setCacheClock();
   };
   const pathOf = (url: string): string => url.replace(/^https?:\/\/[^/]+/, "").split("?")[0]!;
@@ -4218,6 +4222,261 @@ export async function runTests(logger: TestLogger) {
     } finally {
       setBaseUrl(saved);
     }
+  });
+
+  // Reusing Komga's login session: one bcrypt login, then the session id beside Basic.
+  const sessionId = "123e4567-e89b-12d3-a456-426614174000";
+  const sessionCookie = (value = base64EncodeUtf8(sessionId)) => ({
+    name: "KOMGA-SESSION",
+    value,
+    domain: "demo.komga.org",
+  });
+  const respond = (init: {
+    url?: string;
+    status?: number;
+    headers?: Record<string, string>;
+    cookies?: ReturnType<typeof sessionCookie>[];
+  }) => ({
+    url: init.url ?? `${own}/api/v1/libraries`,
+    status: init.status ?? 200,
+    headers: init.headers ?? {},
+    cookies: init.cookies ?? [],
+  });
+  const sendWith = async (
+    request: { url?: string; headers?: Record<string, string> } = {},
+  ): Promise<Record<string, string>> =>
+    (
+      await interceptor.interceptRequest({
+        url: request.url ?? `${own}/api/v1/libraries`,
+        method: "GET",
+        ...(request.headers ? { headers: request.headers } : {}),
+      })
+    ).headers ?? {};
+  const learn = async (
+    response: ReturnType<typeof respond>,
+    headers?: Record<string, string>,
+  ): Promise<void> => {
+    await interceptor.interceptResponse(
+      { url: response.url, method: "GET", ...(headers ? { headers } : {}) },
+      response,
+      new ArrayBuffer(0),
+    );
+  };
+
+  suite.test(
+    "session: the first request has none, the next one sends it beside Basic",
+    async () => {
+      const first = await sendWith();
+      expect(first["X-Auth-Token"]).to.equal(undefined);
+      expect(first["Authorization"]).to.match(/^Basic /);
+      await learn(respond({ cookies: [sessionCookie()] }));
+      const next = await sendWith();
+      expect(next["X-Auth-Token"]).to.equal(sessionId);
+      expect(next["Authorization"]).to.match(/^Basic /);
+      expect(next["Cookie"]).to.equal(undefined);
+    },
+  );
+
+  suite.test(
+    "session: Komga's cookie value is Base64, so it is decoded for the header",
+    async () => {
+      await learn(respond({ cookies: [sessionCookie(base64EncodeUtf8(sessionId))] }));
+      expect((await sendWith())["X-Auth-Token"]).to.equal(sessionId);
+    },
+  );
+
+  suite.test("session: an X-Auth-Token response header is kept as is", async () => {
+    await learn(respond({ headers: { "x-auth-token": "raw-id" } }));
+    expect((await sendWith())["X-Auth-Token"]).to.equal("raw-id");
+  });
+
+  suite.test("session: a new id from Komga replaces the old one", async () => {
+    await learn(respond({ cookies: [sessionCookie()] }));
+    await learn(respond({ headers: { "X-Auth-Token": "newer" } }), { "X-Auth-Token": sessionId });
+    expect((await sendWith())["X-Auth-Token"]).to.equal("newer");
+  });
+
+  suite.test("session: a response without an id keeps the stored one", async () => {
+    await learn(respond({ cookies: [sessionCookie()] }));
+    await learn(respond({}));
+    await learn(respond({ headers: { "X-Auth-Token": "" } }));
+    expect((await sendWith())["X-Auth-Token"]).to.equal(sessionId);
+  });
+
+  suite.test("session: a 401 drops it", async () => {
+    await learn(respond({ cookies: [sessionCookie()] }));
+    await learn(respond({ status: 401 }));
+    expect((await sendWith())["X-Auth-Token"]).to.equal(undefined);
+  });
+
+  suite.test("session: another base URL or username does not get it", async () => {
+    await learn(respond({ cookies: [sessionCookie()] }));
+    expect(getSession(own, "demo@komga.org")).to.equal(sessionId);
+    expect(getSession("https://other.example", "demo@komga.org")).to.equal(undefined);
+    expect(getSession(own, "someone@else")).to.equal(undefined);
+  });
+
+  suite.test("session: a different saved username starts without it", async () => {
+    const saved = getCredentials();
+    try {
+      await learn(respond({ cookies: [sessionCookie()] }));
+      setCredentials("someone@else", "pw");
+      expect((await sendWith())["X-Auth-Token"]).to.equal(undefined);
+    } finally {
+      setCredentials(saved.username, saved.password);
+    }
+  });
+
+  suite.test("session: API key mode never sends or stores it", async () => {
+    const saved = getApiKey();
+    try {
+      await learn(respond({ cookies: [sessionCookie()] }));
+      setApiKey("secret");
+      expect(await sendWith()).to.deep.equal({ "X-API-Key": "secret" });
+      await learn(respond({ cookies: [sessionCookie()] }), { "X-API-Key": "secret" });
+      await learn(respond({ cookies: [sessionCookie()] }));
+      setApiKey("");
+      expect((await sendWith())["X-Auth-Token"]).to.equal(undefined);
+    } finally {
+      setApiKey(saved);
+    }
+  });
+
+  suite.test("session: a foreign host never gets it and never gives one", async () => {
+    await learn(respond({ cookies: [sessionCookie()] }));
+    for (const url of [`${own}.evil/api`, "https://other.example/api"]) {
+      const headers = await sendWith({ url });
+      expect(headers["X-Auth-Token"]).to.equal(undefined);
+      expect(headers["Authorization"]).to.equal(undefined);
+    }
+    clearSessions();
+    await learn(respond({ url: "https://other.example/api", cookies: [sessionCookie()] }));
+    expect((await sendWith())["X-Auth-Token"]).to.equal(undefined);
+  });
+
+  suite.test("session: typed credentials never send or store it", async () => {
+    await learn(respond({ cookies: [sessionCookie()] }));
+    const typed = { username: "typed@x", password: "pw" };
+    const { requests } = await captureRequests("{}", () =>
+      komgaFetch("/api/v2/users/me", { credentials: typed }),
+    );
+    const sent = requests[0] as unknown as { url: string; headers: Record<string, string> };
+    expect(sent.headers["X-Auth-Token"]).to.equal(undefined);
+    expect(sent.headers["Authorization"]).to.equal(basicAuthHeader("typed@x", "pw"));
+    // The app then runs the interceptor on it, which must not add the saved session.
+    expect((await sendWith({ url: sent.url, headers: sent.headers }))["X-Auth-Token"]).to.equal(
+      undefined,
+    );
+    // And the typed login's own session is not kept for the saved one.
+    clearSessions();
+    await learn(respond({ cookies: [sessionCookie()] }), sent.headers);
+    expect((await sendWith())["X-Auth-Token"]).to.equal(undefined);
+  });
+
+  suite.test("session: typed API key never sends it", async () => {
+    await learn(respond({ cookies: [sessionCookie()] }));
+    const { requests } = await captureRequests("{}", () =>
+      komgaFetch("/api/v2/users/me", { apiKey: "typed" }),
+    );
+    const sent = requests[0] as unknown as { headers: Record<string, string> };
+    expect(sent.headers["X-Auth-Token"]).to.equal(undefined);
+    expect(sent.headers["X-API-Key"]).to.equal("typed");
+  });
+
+  suite.test("session: a settings change clears it", async () => {
+    const before = { url: getBaseUrl(), creds: getCredentials(), key: getApiKey() };
+    const changes: [string, () => void][] = [
+      ["setBaseUrl", () => setBaseUrl("https://other.example")],
+      ["setCredentials", () => setCredentials("a@b.c", "pw")],
+      ["setApiKey", () => setApiKey("k")],
+    ];
+    try {
+      for (const [name, change] of changes) {
+        await learn(respond({ cookies: [sessionCookie()] }));
+        expect(getSession(own, before.creds.username), `${name} setup`).to.equal(sessionId);
+        change();
+        expect(getSession(own, before.creds.username), name).to.equal(undefined);
+        setBaseUrl(before.url);
+        setCredentials(before.creds.username, before.creds.password);
+        setApiKey(before.key);
+      }
+    } finally {
+      setBaseUrl(before.url);
+      setCredentials(before.creds.username, before.creds.password);
+      setApiKey(before.key);
+    }
+  });
+
+  // Speed 1 leftovers.
+  suite.test("item builders build thumbnail URLs from the base they are given", async () => {
+    const b = "https://given.example";
+    expect(seriesItem(seriesFixture(), "simple", b).imageUrl).to.match(
+      /^https:\/\/given\.example\//,
+    );
+    expect(onDeckItem(bookFixture(), "simple", undefined, b).imageUrl).to.match(
+      /^https:\/\/given\.example\//,
+    );
+    expect(chapterUpdateItem(bookFixture(), seriesFixture(), b).imageUrl).to.match(
+      /^https:\/\/given\.example\//,
+    );
+    expect(toSourceManga(series, b).mangaInfo.thumbnailUrl).to.match(/^https:\/\/given\.example\//);
+    const staff = staffSection(
+      { ...series, booksMetadata: { summary: "", authors: [{ name: "A", role: "writer" }] } },
+      b,
+    );
+    expect(staff!.items[0]!.staff.imageUrl).to.match(/^https:\/\/given\.example\//);
+  });
+
+  suite.test("a home row reads the base URL once, not once per tile", async () => {
+    const app = Application as unknown as { getState: (key: string) => unknown };
+    const original = app.getState;
+    let reads = 0;
+    app.getState = (key: string) => {
+      if (key === "serverURL") reads++;
+      return original.call(Application, key);
+    };
+    try {
+      const { result } = await routeRequests(
+        () => seriesJson(30),
+        () => getDiscoverSectionItems(sectionFor("keepReading"), undefined),
+      );
+      expect(result.items.length).to.equal(30);
+      // One read for the request, one for the thumbnails.
+      expect(reads).to.be.lessThan(4);
+    } finally {
+      app.getState = original;
+    }
+  });
+
+  suite.test("resolveBookSeries drops the books of a series that is a 403", async () => {
+    const books = [
+      bookFixture({ id: "b1", seriesId: "s1" }),
+      bookFixture({ id: "b2", seriesId: "locked" }),
+    ];
+    const { result } = await routeRequests(
+      (request) =>
+        request.url.endsWith("/locked") ? { status: 403 } : seriesById({ s1: [] })(request),
+      () => resolveBookSeries(books),
+    );
+    expect(result.visible.map((b) => b.id)).to.deep.equal(["b1"]);
+  });
+
+  suite.test("a stored Komga version dated in the future is fetched again", async () => {
+    const now = 9_000_000;
+    setCacheClock(() => now);
+    setStoredServerVersion(getBaseUrl(), "1.0.0", now + DAY_MS);
+    const { requests, result } = await openSettings();
+    expect(docsRequests(requests)).to.equal(1);
+    expect(result).to.equal("1.30.2");
+  });
+
+  suite.test("stored Komga versions keep only the 5 most recent base URLs", async () => {
+    for (let i = 1; i <= 7; i++)
+      setStoredServerVersion(`https://k${i}.example`, "1.30.2", i * 1000);
+    const kept = [1, 2, 3, 4, 5, 6, 7].filter(
+      (i) => getStoredServerVersion(`https://k${i}.example`) !== undefined,
+    );
+    expect(kept).to.deep.equal([3, 4, 5, 6, 7]);
   });
 
   await suite.run();

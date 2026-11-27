@@ -37,7 +37,9 @@ const knownVersion = (baseUrl: string): string | undefined => {
   const cached = versionCache.get(baseUrl);
   if (cached !== undefined) return cached;
   const stored = getStoredServerVersion(baseUrl);
-  if (stored === undefined || cacheNow() - stored.at >= STORED_VERSION_TTL_MS) return undefined;
+  // A time in the future (a clock that was set back) cannot be trusted either.
+  const age = stored === undefined ? 0 : cacheNow() - stored.at;
+  if (stored === undefined || age < 0 || age >= STORED_VERSION_TTL_MS) return undefined;
   versionCache.set(baseUrl, stored.version);
   return stored.version;
 };
